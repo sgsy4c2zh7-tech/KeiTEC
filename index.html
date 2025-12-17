@@ -538,6 +538,17 @@
 
   <script>
     /* ============================
+     *  画面にJSエラーを出す（デバッグ）
+     * ============================ */
+    window.addEventListener("error", (ev) => {
+      try {
+        const msg = (ev && (ev.message || (ev.error && ev.error.message))) ? (ev.message || ev.error.message) : "unknown error";
+        const div = document.getElementById("runInfo");
+        if (div) div.textContent = "JSエラー: " + msg;
+      } catch {}
+    });
+
+    /* ============================
      *  API endpoints
      * ============================ */
     const BOM_TEC_BASE_URL = "https://downloads.sws.bom.gov.au/data/Satellite/";
@@ -716,7 +727,7 @@
     async function fetchNoaaGloTecPrevDay12_2hour(saveAfter=false) {
       try {
         const intervalMin = 120;  // 2時間
-        const maxDiffMin  = 90;   // 10分更新想定。余裕を持たせる
+        const maxDiffMin  = 90;   // 余裕
 
         setStatus("noaaTecStatus", "NOAA GloTEC 一覧(JSON)取得中…");
         const idx = await fetchJson(NOAA_GLOTEC_INDEX_URL);
@@ -740,11 +751,9 @@
 
         const { targets, prevKey } = meta;
 
-        // 12ターゲットに最近傍を割当
         const picks = [];
         for (const t of targets) picks.push(nearestFileForTime(files, t, maxDiffMin));
 
-        // 欠損補完：前日(UTC)に属するファイルだけで探す（許容差広め）
         const prevDayFiles = files.filter(f => toDayKeyUtc(f.tUtc) === prevKey);
         for (let i=0;i<picks.length;i++) {
           if (picks[i]) continue;
@@ -757,7 +766,6 @@
           throw new Error(`前日(UTC)の${targets.length}枠のうち ${miss} 枠が取得不能（一覧欠損/メンテ等）`);
         }
 
-        // キャッシュ済みならスキップ
         if (gNoaaDayKey === prevKey && gNoaaDayFrames && gNoaaDayFrames.length === targets.length) {
           setStatus("noaaTecStatus", `既にメモリに保持済み: NOAA 前日(UTC)=${prevKey}（${targets.length}枚）`);
           renderNoaa12Table();
@@ -772,8 +780,7 @@
 
         const frames = [];
         for (let i=0;i<targets.length;i++) {
-          const vt = targets[i]; // ターゲット時刻をvalidTime扱い
-          // ★重要：lon配列は -180..175（180を含めない）で作る関数にしている
+          const vt = targets[i];
           const f = parseNoaaGloTecGeoJson(texts[i], vt, 2.0, 5.0);
           frames.push(f);
         }
@@ -783,7 +790,6 @@
         gNoaaDayFiles  = picks.map(x=>x.fn);
         gNoaaDayKey    = prevKey;
 
-        // デバッグ表示：先頭9枚だけ textarea に入れる（見た目9個問題は上の一覧で解決）
         for (let k=0;k<9;k++) {
           const ta = document.getElementById(NOAA_INPUT_IDS[k]);
           if (ta) ta.value = texts[k] || "";
@@ -959,7 +965,7 @@
 
     /* ===== VALID DATE/TIME: 11/11/2025 00:00:00UTC ===== */
     function parseBomValidTime(text) {
-      const lines = text.split(/\r?\n/);
+      const lines = String(text || "").split(/\r?\n/);
       for (const line of lines) {
         const m = line.match(/VALID DATE\/TIME:\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})/i);
         if (m) {
@@ -977,7 +983,7 @@
 
     /* ====== BoM TEC テキスト → 格子データ ====== */
     function parseBoM(text) {
-      const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+      const lines = String(text || "").split(/\r?\n/).filter(l => l.trim().length > 0);
       if (!lines.length) throw new Error("空のテキストです。");
 
       let latMin, latMax, latStep, nLat;
@@ -1038,8 +1044,6 @@
 
     /* ============================
      *  NOAA GloTEC GeoJSON → 2°×5° Grid
-     *  - TEC値は小数点以下切り捨て（Math.floor）
-     *  - lon配列は -180..175（180を含めない）←重要
      * ============================ */
     function parseNoaaGloTecGeoJson(text, validTimeFromFilename=null, targetLatStep=2.0, targetLonStep=5.0) {
       let obj;
@@ -1071,13 +1075,12 @@
       if (!valueKey) throw new Error("TEC値プロパティが特定できません（propertiesに数値が無い）");
 
       const pts = [];
-
       for (const f of obj.features) {
         if (!f || !f.geometry) continue;
         let v = parseFloat(f.properties?.[valueKey]);
         if (!isFinite(v)) continue;
 
-        v = Math.floor(v);  // ★小数点以下切り捨て
+        v = Math.floor(v);
         if (v < 0) v = 0;
 
         const g = f.geometry;
@@ -1114,14 +1117,12 @@
       const latArr = [];
       for (let lat=-90; lat<=90+1e-9; lat+=targetLatStep) latArr.push(+lat.toFixed(6));
 
-      // ★ここが重要：+180を入れない（-180と同一点になるため描画が破綻しやすい）
       const lonArr = [];
       for (let lon=-180; lon<=180-1e-9; lon+=targetLonStep) lonArr.push(+lon.toFixed(6)); // -180..175
 
       const nLat = latArr.length, nLon = lonArr.length;
       const grid = Array.from({length:nLat}, ()=>Array.from({length:nLon}, ()=>NaN));
 
-      // 最近傍（簡易）
       for (let i=0;i<nLat;i++) {
         const lat0 = latArr[i];
         for (let j=0;j<nLon;j++) {
@@ -1198,7 +1199,6 @@
           gNoaaInputFiles = gNoaaInputFiles.slice(0,9);
         }
         if (data.noaaPrevDayKey) gNoaaDayKey = data.noaaPrevDayKey;
-
       } catch(e) {
         console.warn("入力の復元に失敗:", e);
       }
@@ -1734,8 +1734,6 @@
 
     /* ============================
      *  Sstorm（簡易Mukhtarov風）
-     *  - rStorm = 1 + f(Kp)*W(lat)*W(month) + tail
-     *  - ΔStorm = (rStorm - 1) * BaseTEC * kStorm
      * ============================ */
     const SstormPos_SIGMA_LAT = 15.0;
     const SstormPos_SIGMA_M   = 2.0;
@@ -1759,7 +1757,6 @@
       return Math.min(d, 12 - d);
     }
     function sstormPos_seasonMonth(latDeg, month) {
-      // 簡易：北半球は11月寄り、南半球は7月寄り
       return (latDeg >= 0) ? 11 : 7;
     }
     function gauss(x, mu, sig) {
@@ -1771,7 +1768,6 @@
       const latAbs = Math.abs(latDeg);
       const mRef = sstormPos_seasonMonth(latDeg, month);
 
-      // basis混合
       let num=0, den=0;
       for (const b of SstormPos_BASIS) {
         const wLat = gauss(latAbs, b.latAbs, SstormPos_SIGMA_LAT);
@@ -1784,14 +1780,11 @@
       }
       let f = (den>0) ? (num/den) : 0;
 
-      // 季節微調整
       const wSeason = gauss(sstormPos_monthDiff(month, mRef), 0, 2.5);
       f *= (0.6 + 0.4*wSeason);
 
-      // tail（Kp>KCでゆっくり増える）
       const tail = (Kp <= SstormPos_KC) ? 0 : (SstormPos_A0 * Math.pow(Kp - SstormPos_KC, SstormPos_W));
 
-      // rStorm
       const r = 1 + Math.max(0, f) + tail;
       return clamp(r, 1.0, 3.0);
     }
@@ -1799,7 +1792,7 @@
     function calcStormDelta(cfg, baseTec, latDeg, month, kpForecast) {
       const r = sstormPos_rStorm(kpForecast, latDeg, month);
       const d = (r - 1.0) * baseTec * cfg.kStorm;
-      return clamp(d, 0, 80); // 暴走防止（必要なら変更）
+      return clamp(d, 0, 80);
     }
 
     /* ============================
@@ -1809,7 +1802,6 @@
       return document.getElementById("tecSourceSelect")?.value || "bom";
     }
 
-    // NOAA12枚：指定時刻に一番近いframeを返す（2時間ステップ）
     function sampleNoaaDayFrameAtUtc(tUtc) {
       if (!gNoaaDayFrames || !gNoaaDayTimes) return null;
       let bestI = 0;
@@ -1821,7 +1813,6 @@
       return gNoaaDayFrames[bestI] || null;
     }
 
-    // BoM9枚：textareaからparse
     function parseBomInputs9() {
       const texts = NOAA_INPUT_IDS.map(id => document.getElementById(id)?.value || "");
       const frames = [];
@@ -1846,7 +1837,6 @@
       if (mode === "noaa") {
         if (gNoaaDayTimes && gNoaaDayTimes.length === 12) candidates = gNoaaDayTimes.slice();
       } else {
-        // BoM: textareaからVALID TIMEの候補
         const texts = NOAA_INPUT_IDS.map(id => document.getElementById(id)?.value || "");
         for (const txt of texts) {
           const v = parseBomValidTime(txt || "");
@@ -1928,7 +1918,6 @@ kBase=${cfg.kBase}, kStorm=${cfg.kStorm}, β=${cfg.betaFlare}, kX=${cfg.kX}, kM=
       map.on("moveend zoomend", () => drawTecOverlay());
       resize();
 
-      // legend
       tecLegendControl = L.control({ position: "bottomright" });
       tecLegendControl.onAdd = function() {
         const div = L.DomUtil.create("div", "leaflet-control tec-legend");
@@ -1957,7 +1946,6 @@ kBase=${cfg.kBase}, kStorm=${cfg.kStorm}, β=${cfg.betaFlare}, kX=${cfg.kX}, kM=
       const label = (mapMode === "gps") ? "GPS" : "TEC";
       title.textContent = label;
 
-      // gradient
       const stops = [];
       const last = scale[scale.length-1]?.limit ?? 1;
       max.textContent = String(last);
@@ -1984,7 +1972,7 @@ kBase=${cfg.kBase}, kStorm=${cfg.kStorm}, β=${cfg.betaFlare}, kX=${cfg.kX}, kM=
     }
 
     /* ============================
-     *  経度wrap対応の描画（←写真の不具合の本丸）
+     *  経度wrap対応の描画
      * ============================ */
     function wrapLonNearCenter(lon, centerLon) {
       let x = lon;
@@ -2018,19 +2006,17 @@ kBase=${cfg.kBase}, kStorm=${cfg.kStorm}, β=${cfg.betaFlare}, kX=${cfg.kX}, kM=
 
       const centerLon = map.getCenter().lng;
 
-      // グリッド間隔（NOAAは 2°×5°想定、BoMは可変）
       const dLat = (nLat>1) ? (latArr[1]-latArr[0]) : 2;
       const dLon = (nLon>1) ? (lonArr[1]-lonArr[0]) : 5;
 
       tecCtx.globalAlpha = tecAlpha;
 
-      // 描画：各セルを矩形で塗る（wrapをcenter基準で補正）
       for (let i=0;i<nLat;i++) {
         const lat0 = latArr[i];
-        const lat1 = lat0 + dLat; // 2°
+        const lat1 = lat0 + dLat;
         for (let j=0;j<nLon;j++) {
           const lon0 = lonArr[j];
-          const lon1 = lon0 + dLon; // 5°
+          const lon1 = lon0 + dLon;
 
           let v = frame[i][j];
           if (!isFinite(v)) continue;
@@ -2043,7 +2029,6 @@ kBase=${cfg.kBase}, kStorm=${cfg.kStorm}, β=${cfg.betaFlare}, kX=${cfg.kX}, kM=
           const lon0w = wrapLonNearCenter(lon0, centerLon);
           const lon1w = wrapLonNearCenter(lon1, centerLon);
 
-          // Leaflet座標へ（南北で順序注意）
           const p1 = map.latLngToContainerPoint([lat0, lon0w]);
           const p2 = map.latLngToContainerPoint([lat1, lon1w]);
 
@@ -2068,11 +2053,11 @@ kBase=${cfg.kBase}, kStorm=${cfg.kStorm}, β=${cfg.betaFlare}, kX=${cfg.kX}, kM=
 
       const cfg = getConfigFromUI();
 
-      // 最近傍index
       let bestI=0, bestJ=0, bestD=1e99;
+      const lonN = ((latlng.lng+540)%360-180);
       for (let i=0;i<gGrid.nLat;i++) {
         for (let j=0;j<gGrid.nLon;j++) {
-          const d = Math.abs(gGrid.latArr[i]-latlng.lat) + Math.abs(gGrid.lonArr[j]-((latlng.lng+540)%360-180));
+          const d = Math.abs(gGrid.latArr[i]-latlng.lat) + Math.abs(gGrid.lonArr[j]-lonN);
           if (d < bestD) { bestD=d; bestI=i; bestJ=j; }
         }
       }
@@ -2092,18 +2077,19 @@ GPS L1 err: ${isFinite(gps) ? gps.toFixed(2) : "NaN"} m
     }
 
     /* ============================
-     *  時間スライダー
+     *  時間スライダー（★不具合修正版）
      * ============================ */
     function onSliderChange() {
-      currentStepIndex = parseInt(document.getElementById("timeSlider").value,10) || 0;
+      currentStepIndex = parseInt(document.getElementById("timeSlider").value, 10) || 0;
+
       const h = (currentStepIndex * DT_MINUTES) / 60.0;
-      document.getElementById("timeLabel").textContent = `t = ${h.toFixed(1)}
-      document.getElementById("timeLabel").textContent = `t = ${h.toFixed(1)} h`;
+      const timeLabelEl = document.getElementById("timeLabel");
+      if (timeLabelEl) timeLabelEl.textContent = `t = ${h.toFixed(1)} h`;
 
       const t = gForecastTimes[currentStepIndex];
-      document.getElementById("utcLabel").textContent = "UTC: " + (t ? t.toISOString().replace(".000Z","Z") : "--");
+      const utcLabelEl = document.getElementById("utcLabel");
+      if (utcLabelEl) utcLabelEl.textContent = "UTC: " + (t ? t.toISOString().replace(".000Z","Z") : "--");
 
-      // Kp表示
       let kpF = null;
       if (t) kpF = sampleSeriesAtUtc(gKpSeries, t, true);
       if (kpF == null) kpF = 3.0;
@@ -2112,7 +2098,8 @@ GPS L1 err: ${isFinite(gps) ? gps.toFixed(2) : "NaN"} m
       if (t) kpB = getKpBaseAtUtc(t, kpF);
       if (kpB == null) kpB = kpF;
 
-      document.getElementById("kpNowLabel").textContent = `KpF=${(kpF!=null?kpF.toFixed(2):"--")} / KpB=${(kpB!=null?kpB.toFixed(2):"--")}`;
+      const kpNowEl = document.getElementById("kpNowLabel");
+      if (kpNowEl) kpNowEl.textContent = `KpF=${(kpF!=null?kpF.toFixed(2):"--")} / KpB=${(kpB!=null?kpB.toFixed(2):"--")}`;
 
       drawTecOverlay();
     }
@@ -2150,14 +2137,11 @@ GPS L1 err: ${isFinite(gps) ? gps.toFixed(2) : "NaN"} m
 
     /* ============================
      *  入力フレームを「日周」でサンプル
-     *  - NOAA12枚: 前日UTCの時刻帯に折り返して最近傍
-     *  - BoM9枚: 入力テキストのVALID TIMEの「時刻帯」に折り返して最近傍
      * ============================ */
     function utcMinutesOfDay(d) { return d.getUTCHours()*60 + d.getUTCMinutes(); }
 
     function sampleNoaaFrameByDiurnal(tUtc) {
       if (!gNoaaDayFrames || !gNoaaDayTimes || gNoaaDayTimes.length !== 12) return null;
-      // 「前日キー」の日付に、tUtcの時刻を載せ替え
       if (!gNoaaDayKey) return sampleNoaaDayFrameAtUtc(tUtc);
       const m = gNoaaDayKey.match(/^(\d{4})-(\d{2})-(\d{2})$/);
       if (!m) return sampleNoaaDayFrameAtUtc(tUtc);
@@ -2168,7 +2152,6 @@ GPS L1 err: ${isFinite(gps) ? gps.toFixed(2) : "NaN"} m
 
     function sampleBomFrameByDiurnal(frames, tUtc) {
       if (!frames || !frames.length) return null;
-      // frames: [{grid,latArr,lonArr,validTime}, ...]
       const m0 = utcMinutesOfDay(tUtc);
       let best = frames[0], bestD = 1e99;
       for (const f of frames) {
@@ -2183,9 +2166,7 @@ GPS L1 err: ${isFinite(gps) ? gps.toFixed(2) : "NaN"} m
 
     function getInputFrameAtUtc(mode, tUtc, bomFramesCache=null) {
       if (mode === "noaa") return sampleNoaaFrameByDiurnal(tUtc);
-      // bom
-      const f = sampleBomFrameByDiurnal(bomFramesCache, tUtc);
-      return f;
+      return sampleBomFrameByDiurnal(bomFramesCache, tUtc);
     }
 
     /* ============================
@@ -2204,8 +2185,7 @@ GPS L1 err: ${isFinite(gps) ? gps.toFixed(2) : "NaN"} m
 
     function buildKpSeriesFromUI() {
       const txt = document.getElementById("noaaKpText")?.value || "";
-      const s = parseKpText(txt);
-      return s;
+      return parseKpText(txt);
     }
 
     function buildBaseSeriesFromUI() {
@@ -2219,7 +2199,6 @@ GPS L1 err: ${isFinite(gps) ? gps.toFixed(2) : "NaN"} m
       return kp;
     }
 
-    // Base用フレア（Px,Pm）
     function getBaseFlareAtUtc(tUtc) {
       const f = sampleFlareSeriesAtUtc(gBaseFlareSeries, tUtc);
       return f || { Px:0, Pm:0 };
@@ -2230,14 +2209,13 @@ GPS L1 err: ${isFinite(gps) ? gps.toFixed(2) : "NaN"} m
       return calcFlareDeltaFromProbs(cfg, latDeg, lonDeg, tUtc, f.Px, f.Pm);
     }
 
-    // ★Base抽出（循環を避けるため input を近似に使う）
     function extractBaseTecApprox(cfg, inputTec, latDeg, lonDeg, tUtc, kpF) {
       const kpB = getKpBaseAtUtc(tUtc, kpF);
       const mon = monthFromUtc(tUtc);
 
       const flareBase = calcFlareDeltaBase(cfg, latDeg, lonDeg, tUtc);
       const rB = sstormPos_rStorm(kpB, latDeg, mon);
-      const stormBase = (rB - 1.0) * inputTec * cfg.kStorm; // input近似
+      const stormBase = (rB - 1.0) * inputTec * cfg.kStorm;
 
       let base = inputTec - flareBase - stormBase;
       if (!isFinite(base)) base = 0;
@@ -2251,7 +2229,6 @@ GPS L1 err: ${isFinite(gps) ? gps.toFixed(2) : "NaN"} m
 
         const mode = getTecSourceMode();
 
-        // 入力フレーム準備
         let bomFrames = null;
         let firstFrame = null;
 
@@ -2265,36 +2242,28 @@ GPS L1 err: ${isFinite(gps) ? gps.toFixed(2) : "NaN"} m
           firstFrame = bomFrames[0];
         }
 
-        // グリッド確定
         gGrid = { latArr:firstFrame.latArr, lonArr:firstFrame.lonArr, nLat:firstFrame.nLat, nLon:firstFrame.nLon };
 
-        // Kp series
         gKpSeries = buildKpSeriesFromUI();
         if (!gKpSeries.length) logInfo("Kp予報が空なので、Kp=3.0固定で計算します。");
 
-        // Base series
         buildBaseSeriesFromUI();
 
-        // start time
         let t0 = getForecastStartFromUI();
         if (!t0) {
-          // fallback: NOAAは前日00:00、BoMは最初のvalidTime、どちらも無理なら今
           if (mode === "noaa" && gNoaaDayTimes && gNoaaDayTimes.length) t0 = gNoaaDayTimes[0];
           else if (mode === "bom" && bomFrames && bomFrames[0]?.validTime) t0 = bomFrames[0].validTime;
           else t0 = new Date();
         }
         gForecastStart = t0;
 
-        // times
         gForecastTimes = [];
         for (let s=0;s<=N_STEPS;s++) {
           gForecastTimes.push(new Date(t0.getTime() + s*DT_MINUTES*60*1000));
         }
 
-        // frames allocate
         gForecastFrames = new Array(N_STEPS+1);
 
-        // compute
         logInfo(`計算中… mode=${mode}, steps=${N_STEPS+1}, grid=${gGrid.nLat}x${gGrid.nLon}`);
 
         for (let s=0;s<=N_STEPS;s++) {
@@ -2315,10 +2284,8 @@ GPS L1 err: ${isFinite(gps) ? gps.toFixed(2) : "NaN"} m
               const inputTec = inFrame.grid[i]?.[j];
               if (!isFinite(inputTec)) continue;
 
-              // Base抽出（近似）
               const baseTec = extractBaseTecApprox(cfg, inputTec, lat, lon, tUtc, kpF);
 
-              // 予報加算
               const basePart = cfg.kBase * baseTec;
               const dStorm = calcStormDelta(cfg, baseTec, lat, mon, kpF);
               const dFlare = calcFlareDeltaForecast(cfg, lat, lon, tUtc);
@@ -2330,15 +2297,14 @@ GPS L1 err: ${isFinite(gps) ? gps.toFixed(2) : "NaN"} m
           gForecastFrames[s] = out;
         }
 
-        // slider
         const slider = document.getElementById("timeSlider");
         slider.min = 0;
         slider.max = String(N_STEPS);
         slider.value = "0";
         currentStepIndex = 0;
 
-        fillForecastStartCandidates(); // 表示上の整合
-        onSliderChange();              // ラベル更新＋描画
+        fillForecastStartCandidates();
+        onSliderChange();
         drawTecOverlay();
 
         logInfo("計算完了。スライダーで時間を動かしてください。");
@@ -2408,18 +2374,15 @@ GPS L1 err: ${isFinite(gps) ? gps.toFixed(2) : "NaN"} m
     window.addEventListener("load", () => {
       initMap();
 
-      // 保存復元
       loadBomInputsFromStorage();
       loadTecColorScaleFromStorage();
       loadGpsColorScaleFromStorage();
       loadConfig(true);
 
-      // カラースケールをUIへ反映（ロード後の表示整合）
       updateTecLegend();
       updateFormulaText();
       fillForecastStartCandidates();
 
-      // 初期表示
       onSliderChange();
       drawTecOverlay();
     });
