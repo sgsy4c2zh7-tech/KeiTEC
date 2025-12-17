@@ -963,6 +963,99 @@
     }
     function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
 
+    /* =========================================================
+     * ★★ ここが追加：rAFで描画を集約 + 投影キャッシュ ★★
+     * ========================================================= */
+    let _rafPending = false;
+    let _projCache = null; // { key, xEdges, yEdges, dLat, dLon, sizeX, sizeY }
+
+    function requestRedraw() {
+      if (_rafPending) return;
+      _rafPending = true;
+      requestAnimationFrame(() => {
+        _rafPending = false;
+        drawTecOverlay(); // 内部でキャッシュ更新して描画（軽量化済）
+      });
+    }
+
+    function getMapStateKey() {
+      if (!map) return "no_map";
+      const c = map.getCenter();
+      const z = map.getZoom();
+      const s = map.getSize();
+      // ざっくりでOK（pan中はmoveend後に更新される運用）
+      return `${z}|${c.lat.toFixed(5)}|${c.lng.toFixed(5)}|${s.x}|${s.y}|${mapMode}|${tecAlpha}`;
+    }
+
+    function wrapLonNearCenter(lon, centerLon) {
+      let x = lon;
+      while (x - centerLon > 180) x -= 360;
+      while (x - centerLon < -180) x += 360;
+      return x;
+    }
+
+    function ensureCanvasSize() {
+      if (!map || !tecCanvas) return;
+      const size = map.getSize();
+      if (tecCanvas.width !== size.x || tecCanvas.height !== size.y) {
+        tecCanvas.width = size.x;
+        tecCanvas.height = size.y;
+        tecCanvas.style.width = size.x + "px";
+        tecCanvas.style.height = size.y + "px";
+      }
+    }
+
+    // lat/lon境界の投影をキャッシュ（セル全件のlatLngToContainerPointをやめる）
+    function rebuildProjectionCacheIfNeeded() {
+      if (!map || !gGrid) { _projCache = null; return; }
+
+      const key = getMapStateKey();
+      if (_projCache && _projCache.key === key) return;
+
+      const latArr = gGrid.latArr;
+      const lonArr = gGrid.lonArr;
+      const nLat = gGrid.nLat;
+      const nLon = gGrid.nLon;
+
+      const dLat = (nLat > 1) ? (latArr[1] - latArr[0]) : 2;
+      const dLon = (nLon > 1) ? (lonArr[1] - lonArr[0]) : 5;
+
+      const centerLon = map.getCenter().lng;
+
+      // 境界配列（n+1）
+      const latEdges = new Array(nLat + 1);
+      for (let i=0;i<nLat;i++) latEdges[i] = latArr[i];
+      latEdges[nLat] = latArr[nLat-1] + dLat;
+
+      const lonEdges = new Array(nLon + 1);
+      for (let j=0;j<nLon;j++) lonEdges[j] = lonArr[j];
+      lonEdges[nLon] = lonArr[nLon-1] + dLon;
+
+      // yはlatだけでほぼ決まるので lon=0 で代表
+      const yEdges = new Array(nLat + 1);
+      for (let i=0;i<latEdges.length;i++) {
+        const p = map.latLngToContainerPoint([latEdges[i], 0]);
+        yEdges[i] = p.y;
+      }
+
+      // xはlonだけで決まるので lat=0 で代表（wrap込み）
+      const xEdges = new Array(nLon + 1);
+      for (let j=0;j<lonEdges.length;j++) {
+        const lw = wrapLonNearCenter(lonEdges[j], centerLon);
+        const p = map.latLngToContainerPoint([0, lw]);
+        xEdges[j] = p.x;
+      }
+
+      const size = map.getSize();
+      _projCache = { key, xEdges, yEdges, dLat, dLon, sizeX:size.x, sizeY:size.y };
+    }
+
+    function getColorFromScale(v, scale) {
+      if (!isFinite(v)) return null;
+      for (const s of scale) if (v <= s.limit) return s.color;
+      return scale[scale.length-1].color;
+    }
+
     /* ===== VALID DATE/TIME: 11/11/2025 00:00:00UTC ===== */
     function parseBomValidTime(text) {
       const lines = String(text || "").split(/\r?\n/);
@@ -1123,6 +1216,7 @@
       const nLat = latArr.length, nLon = lonArr.length;
       const grid = Array.from({length:nLat}, ()=>Array.from({length:nLon}, ()=>NaN));
 
+      // ※ここは格子化が重い（ただしNOAA12枚取得時だけなのでOK）
       for (let i=0;i<nLat;i++) {
         const lat0 = latArr[i];
         for (let j=0;j<nLon;j++) {
@@ -1236,6 +1330,7 @@
       localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(cfg));
       logInfo("係数設定を保存しました。");
       updateFormulaText();
+      requestRedraw();
     }
 
     function loadConfig(apply) {
@@ -1280,7 +1375,7 @@
       localStorage.setItem(STORAGE_KEY_TCOL, JSON.stringify(gTecColorScale));
       logInfo("TECカラースケールを保存しました。");
       updateTecLegend();
-      drawTecOverlay();
+      requestRedraw();
     }
 
     function resetTecColorScale() {
@@ -1300,7 +1395,7 @@
       document.getElementById("tColor4").value = "#ff0000";
       localStorage.setItem(STORAGE_KEY_TCOL, JSON.stringify(gTecColorScale));
       updateTecLegend();
-      drawTecOverlay();
+      requestRedraw();
     }
 
     function loadTecColorScaleFromStorage() {
@@ -1343,7 +1438,7 @@
       localStorage.setItem(STORAGE_KEY_GCOL, JSON.stringify(gGpsColorScale));
       logInfo("GPS色スケールを保存しました。");
       updateTecLegend();
-      drawTecOverlay();
+      requestRedraw();
     }
 
     function resetGpsColorScale() {
@@ -1363,7 +1458,7 @@
       document.getElementById("gColor4").value = "#ff0000";
       localStorage.setItem(STORAGE_KEY_GCOL, JSON.stringify(gGpsColorScale));
       updateTecLegend();
-      drawTecOverlay();
+      requestRedraw();
     }
 
     function loadGpsColorScaleFromStorage() {
@@ -1906,16 +2001,13 @@ kBase=${cfg.kBase}, kStorm=${cfg.kStorm}, β=${cfg.betaFlare}, kX=${cfg.kX}, kM=
       document.getElementById("tecMap").appendChild(tecCanvas);
 
       const resize = () => {
-        const size = map.getSize();
-        tecCanvas.width = size.x;
-        tecCanvas.height = size.y;
-        tecCanvas.style.width = size.x + "px";
-        tecCanvas.style.height = size.y + "px";
-        drawTecOverlay();
+        ensureCanvasSize();
+        _projCache = null; // サイズ変化でキャッシュ無効化
+        requestRedraw();
       };
 
       map.on("resize", resize);
-      map.on("moveend zoomend", () => drawTecOverlay());
+      map.on("moveend zoomend", () => { _projCache = null; requestRedraw(); });
       resize();
 
       tecLegendControl = L.control({ position: "bottomright" });
@@ -1963,32 +2055,23 @@ kBase=${cfg.kBase}, kStorm=${cfg.kStorm}, β=${cfg.betaFlare}, kX=${cfg.kX}, kM=
 
     function onTecAlphaChange() {
       tecAlpha = parseFloat(document.getElementById("tecAlpha").value) || 0.8;
-      drawTecOverlay();
+      _projCache = null; // alphaもkeyに入れてるが念のため
+      requestRedraw();
     }
     function changeMapMode() {
       mapMode = document.getElementById("mapModeSelect").value || "tec";
       updateTecLegend();
-      drawTecOverlay();
+      _projCache = null;
+      requestRedraw();
     }
 
     /* ============================
-     *  経度wrap対応の描画
+     *  描画（rAF集約 + 投影キャッシュ版）
      * ============================ */
-    function wrapLonNearCenter(lon, centerLon) {
-      let x = lon;
-      while (x - centerLon > 180) x -= 360;
-      while (x - centerLon < -180) x += 360;
-      return x;
-    }
-
-    function getColorFromScale(v, scale) {
-      if (!isFinite(v)) return null;
-      for (const s of scale) if (v <= s.limit) return s.color;
-      return scale[scale.length-1].color;
-    }
-
     function drawTecOverlay() {
       if (!map || !tecCtx || !tecCanvas) return;
+      ensureCanvasSize();
+
       const size = map.getSize();
       tecCtx.clearRect(0,0,size.x,size.y);
 
@@ -1996,28 +2079,28 @@ kBase=${cfg.kBase}, kStorm=${cfg.kStorm}, β=${cfg.betaFlare}, kX=${cfg.kX}, kM=
       const frame = gForecastFrames[currentStepIndex];
       if (!frame) return;
 
-      const latArr = gGrid.latArr;
-      const lonArr = gGrid.lonArr;
-      const nLat = gGrid.nLat;
-      const nLon = gGrid.nLon;
+      // ★キャッシュ更新
+      rebuildProjectionCacheIfNeeded();
+      if (!_projCache) return;
 
       const cfg = getConfigFromUI();
       const scale = (mapMode === "gps") ? gGpsColorScale : gTecColorScale;
 
-      const centerLon = map.getCenter().lng;
-
-      const dLat = (nLat>1) ? (latArr[1]-latArr[0]) : 2;
-      const dLon = (nLon>1) ? (lonArr[1]-lonArr[0]) : 5;
-
       tecCtx.globalAlpha = tecAlpha;
 
-      for (let i=0;i<nLat;i++) {
-        const lat0 = latArr[i];
-        const lat1 = lat0 + dLat;
-        for (let j=0;j<nLon;j++) {
-          const lon0 = lonArr[j];
-          const lon1 = lon0 + dLon;
+      const nLat = gGrid.nLat;
+      const nLon = gGrid.nLon;
+      const xE = _projCache.xEdges;
+      const yE = _projCache.yEdges;
 
+      // セル描画（投影は境界だけ使う）
+      for (let i=0;i<nLat;i++) {
+        const y0 = yE[i], y1 = yE[i+1];
+        const y = Math.min(y0, y1);
+        const h = Math.abs(y1 - y0);
+        if (h < 0.2) continue;
+
+        for (let j=0;j<nLon;j++) {
           let v = frame[i][j];
           if (!isFinite(v)) continue;
 
@@ -2026,18 +2109,10 @@ kBase=${cfg.kBase}, kStorm=${cfg.kStorm}, β=${cfg.betaFlare}, kX=${cfg.kX}, kM=
           const col = getColorFromScale(v, scale);
           if (!col) continue;
 
-          const lon0w = wrapLonNearCenter(lon0, centerLon);
-          const lon1w = wrapLonNearCenter(lon1, centerLon);
-
-          const p1 = map.latLngToContainerPoint([lat0, lon0w]);
-          const p2 = map.latLngToContainerPoint([lat1, lon1w]);
-
-          const x = Math.min(p1.x, p2.x);
-          const y = Math.min(p1.y, p2.y);
-          const w = Math.abs(p2.x - p1.x);
-          const h = Math.abs(p2.y - p1.y);
-
-          if (w < 0.2 || h < 0.2) continue;
+          const x0 = xE[j], x1 = xE[j+1];
+          const x = Math.min(x0, x1);
+          const w = Math.abs(x1 - x0);
+          if (w < 0.2) continue;
 
           tecCtx.fillStyle = col;
           tecCtx.fillRect(x, y, w, h);
@@ -2077,7 +2152,7 @@ GPS L1 err: ${isFinite(gps) ? gps.toFixed(2) : "NaN"} m
     }
 
     /* ============================
-     *  時間スライダー（★不具合修正版）
+     *  時間スライダー（rAF集約版）
      * ============================ */
     function onSliderChange() {
       currentStepIndex = parseInt(document.getElementById("timeSlider").value, 10) || 0;
@@ -2101,7 +2176,8 @@ GPS L1 err: ${isFinite(gps) ? gps.toFixed(2) : "NaN"} m
       const kpNowEl = document.getElementById("kpNowLabel");
       if (kpNowEl) kpNowEl.textContent = `KpF=${(kpF!=null?kpF.toFixed(2):"--")} / KpB=${(kpB!=null?kpB.toFixed(2):"--")}`;
 
-      drawTecOverlay();
+      // ★ここが重要：描画は直接しない。rAFにまとめる
+      requestRedraw();
     }
 
     /* ============================
@@ -2304,9 +2380,8 @@ GPS L1 err: ${isFinite(gps) ? gps.toFixed(2) : "NaN"} m
         currentStepIndex = 0;
 
         fillForecastStartCandidates();
-        onSliderChange();
-        drawTecOverlay();
-
+        _projCache = null;
+        onSliderChange();  // ラベル更新 + requestRedraw()
         logInfo("計算完了。スライダーで時間を動かしてください。");
       } catch (e) {
         console.error(e);
@@ -2360,11 +2435,12 @@ GPS L1 err: ${isFinite(gps) ? gps.toFixed(2) : "NaN"} m
       gForecastTimes = [];
       gForecastStart = null;
       currentStepIndex = 0;
+      _projCache = null;
       document.getElementById("timeSlider").value = "0";
       document.getElementById("utcLabel").textContent = "UTC: --";
       document.getElementById("kpNowLabel").textContent = "KpF=-- / KpB=--";
       document.getElementById("pointInfo").textContent = "地図上をクリックすると、その格子点のTEC・GPS L1誤差と位置が表示されます。";
-      drawTecOverlay();
+      requestRedraw();
       logInfo("リセットしました。");
     }
 
@@ -2383,8 +2459,7 @@ GPS L1 err: ${isFinite(gps) ? gps.toFixed(2) : "NaN"} m
       updateFormulaText();
       fillForecastStartCandidates();
 
-      onSliderChange();
-      drawTecOverlay();
+      onSliderChange(); // ラベル更新 + requestRedraw()
     });
   </script>
 </body>
