@@ -176,7 +176,7 @@
       right: 22px;
       z-index: 9999;
       font-weight: 900;
-      font-size: 64px;             /* ←デカさはここで調整 */
+      font-size: 64px;
       letter-spacing: 1px;
       color: rgba(0,0,0,0.86);
       text-shadow:
@@ -187,8 +187,6 @@
       user-select:none;
       line-height: 1;
     }
-
-    /* 画面が小さい時は自動で少し縮む（邪魔になりすぎ防止） */
     @media (max-width: 1100px){
       #timeOverlay{ font-size: 48px; }
     }
@@ -227,6 +225,7 @@
           ・NOAA入力は <b>解析前日(UTC)の1日分</b> をAPI取得（<b>2時間おき12枚</b>）→ 2°×5°格子化<br>
           ・4日予報では NOAA12枚を <b>UTC時刻-of-dayで日周リピート</b>（模様が時間で動く）<br>
           ・今回の修正：<b>2時間→30分は線形補間</b>、BaseKp/Flareも<b>日周リピート＋線形補間</b><br>
+          ・今回の修正：<b>NOAA 3-day Kp テキストのパースを堅牢化（年=2026が 2,0,2,6 になる問題を回避）</b><br>
         </div>
       </div>
 
@@ -568,7 +567,6 @@
         </div>
       </div>
 
-      <!-- ★地図divの中に巨大時刻divを追加 -->
       <div class="card map-card">
         <div id="tecMap">
           <div id="timeOverlay">UTC: --</div>
@@ -599,7 +597,6 @@
      * ============================ */
     function formatOverlayUtc(t){
       if (!(t instanceof Date) || isNaN(t.getTime())) return "UTC: --";
-      // 例: "2026-01-23 00:00Z"
       const iso = t.toISOString().replace(".000Z","Z");
       const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})Z$/);
       if (!m) return "UTC: " + iso;
@@ -994,10 +991,10 @@
     const DT_MINUTES     = 30;
     const N_STEPS = Math.round(FORECAST_HOURS * 60 / DT_MINUTES); // 192
 
-    let gGrid = null;              // {latArr, lonArr, nLat, nLon}
-    let gForecastFrames = [];      // [step][i][j]
-    let gForecastTimes  = [];      // Date[N_STEPS+1]
-    let gForecastStart  = null;    // Date
+    let gGrid = null;
+    let gForecastFrames = [];
+    let gForecastTimes  = [];
+    let gForecastStart  = null;
     let currentStepIndex = 0;
 
     let gTecColorScale = [
@@ -1013,13 +1010,12 @@
       { limit: 40, color: "#ff0000" }
     ];
 
-    let gKpSeries        = []; // 予報Kp（絶対時刻）
-    let gBaseKpSeries    = []; // BaseKp（絶対時刻 1日分想定）
-    let gBaseFlareSeries = []; // Base flare（絶対時刻 1日分想定）
+    let gKpSeries        = [];
+    let gBaseKpSeries    = [];
+    let gBaseFlareSeries = [];
 
-    // ★日周補間用に前処理した配列（runForecastで作る）
-    let gBaseKpTod = null;       // {mins:number[], vals:number[]}
-    let gBaseFlareTod = null;    // {mins:number[], Px:number[], Pm:number[]}
+    let gBaseKpTod = null;
+    let gBaseFlareTod = null;
 
     let map = null;
     let tecCanvas = null;
@@ -1041,7 +1037,7 @@
     function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
 
     /* ============================
-     *  ★描画をrAFでまとめる（スライダー軽量化）
+     *  ★描画をrAFでまとめる
      * ============================ */
     let _drawQueued = false;
     function requestDraw() {
@@ -1208,12 +1204,11 @@
       for (let lat=-90; lat<=90+1e-9; lat+=targetLatStep) latArr.push(+lat.toFixed(6));
 
       const lonArr = [];
-      for (let lon=-180; lon<=180-1e-9; lon+=targetLonStep) lonArr.push(+lon.toFixed(6)); // -180..175
+      for (let lon=-180; lon<=180-1e-9; lon+=targetLonStep) lonArr.push(+lon.toFixed(6));
 
       const nLat = latArr.length, nLon = lonArr.length;
       const grid = Array.from({length:nLat}, ()=>Array.from({length:nLon}, ()=>NaN));
 
-      // ※高速化余地あり。まずは確実性優先。
       for (let i=0;i<nLat;i++) {
         const lat0 = latArr[i];
         for (let j=0;j<nLon;j++) {
@@ -1258,141 +1253,155 @@
       logInfo("入力（BoM/NOAA）を保存しました。（次回起動時に自動復元）");
     }
 
-        function loadBomInputsFromStorage() {
+    function loadBomInputsFromStorage() {
+      const s = localStorage.getItem(STORAGE_KEY_BOM);
+      if (!s) return;
       try {
-        const raw = localStorage.getItem(STORAGE_KEY_BOM);
-        if (!raw) return;
-        const data = JSON.parse(raw);
+        const data = JSON.parse(s);
+        if (data.tecSource) document.getElementById("tecSourceSelect").value = data.tecSource;
 
-        // TEC source
-        const sel = document.getElementById("tecSourceSelect");
-        if (sel && data.tecSource) sel.value = data.tecSource;
+        if (data.bomInput1 !== undefined) document.getElementById("bomInput1").value = data.bomInput1;
+        if (data.bomInput2 !== undefined) document.getElementById("bomInput2").value = data.bomInput2;
+        if (data.bomInput3 !== undefined) document.getElementById("bomInput3").value = data.bomInput3;
+        if (data.bomInput4 !== undefined) document.getElementById("bomInput4").value = data.bomInput4;
+        if (data.bomInput5 !== undefined) document.getElementById("bomInput5").value = data.bomInput5;
+        if (data.bomInput6 !== undefined) document.getElementById("bomInput6").value = data.bomInput6;
+        if (data.bomInput7 !== undefined) document.getElementById("bomInput7").value = data.bomInput7;
+        if (data.bomInput8 !== undefined) document.getElementById("bomInput8").value = data.bomInput8;
+        if (data.bomInput9 !== undefined) document.getElementById("bomInput9").value = data.bomInput9;
 
-        // 9 inputs
-        for (let k=1;k<=9;k++){
-          const id = "bomInput"+k;
-          if (data[id] !== undefined && document.getElementById(id)) {
-            document.getElementById(id).value = data[id] || "";
-          }
-        }
-
-        // NOAA debug meta (9枠)
         if (Array.isArray(data.noaaTimes)) {
-          gNoaaInputTimes = data.noaaTimes.map(x => x ? new Date(x) : null);
+          gNoaaInputTimes = data.noaaTimes.map(x => {
+            if (!x) return null;
+            const d = new Date(x);
+            return isNaN(d.getTime()) ? null : d;
+          });
+          while (gNoaaInputTimes.length < 9) gNoaaInputTimes.push(null);
+          gNoaaInputTimes = gNoaaInputTimes.slice(0,9);
         }
         if (Array.isArray(data.noaaFiles)) {
           gNoaaInputFiles = data.noaaFiles.map(x => x || null);
+          while (gNoaaInputFiles.length < 9) gNoaaInputFiles.push(null);
+          gNoaaInputFiles = gNoaaInputFiles.slice(0,9);
         }
-
-        // NOAA prevday key（メモリ本体は保存しない：再取得が必要）
         if (data.noaaPrevDayKey) gNoaaDayKey = data.noaaPrevDayKey;
-
-        logInfo("保存された入力（BoM/NOAA）を復元しました。");
-        fillForecastStartCandidates();
-      } catch (e) {
-        console.error(e);
+      } catch(e) {
+        console.warn("入力の復元に失敗:", e);
       }
     }
 
     function clearBomInputsStorage() {
       localStorage.removeItem(STORAGE_KEY_BOM);
-      logInfo("保存された入力（BoM/NOAA）を削除しました。");
+      logInfo("保存されていた 入力（BoM/NOAA）を削除しました。（テキスト内容はそのまま）");
     }
 
-    /* ============ Config 保存/読込 ============ */
-    function readConfigFromUi() {
-      const cfg = {
-        kBase: +document.getElementById("cfg_kBase").value,
-        kStorm:+document.getElementById("cfg_kStorm").value,
-        betaFlare:+document.getElementById("cfg_betaFlare").value,
-        kX:+document.getElementById("cfg_kX").value,
-        kM:+document.getElementById("cfg_kM").value,
-        kL1:+document.getElementById("cfg_kL1").value,
-        sigmaLat:+document.getElementById("cfg_sigmaLat").value,
-        sigmaM:+document.getElementById("cfg_sigmaM").value,
-        useTail: !!document.getElementById("cfg_useTail").checked,
-        tailKc:+document.getElementById("cfg_tailKc").value,
-        tailW:+document.getElementById("cfg_tailW").value,
-        tailA0:+document.getElementById("cfg_tailA0").value
+    /* ============ Config（係数） ============ */
+    function getConfigFromUI() {
+      return {
+        kBase:     parseFloat(document.getElementById("cfg_kBase").value)     || 1.0,
+        kStorm:    parseFloat(document.getElementById("cfg_kStorm").value)    || 1.0,
+        betaFlare: parseFloat(document.getElementById("cfg_betaFlare").value) || 0.7,
+        kX:        parseFloat(document.getElementById("cfg_kX").value)        || 1.0,
+        kM:        parseFloat(document.getElementById("cfg_kM").value)        || 0.5,
+        kL1:       parseFloat(document.getElementById("cfg_kL1").value)       || 0.16,
+        sigmaLat:  parseFloat(document.getElementById("cfg_sigmaLat").value)  || 15.0,
+        sigmaM:    parseFloat(document.getElementById("cfg_sigmaM").value)    || 2.0,
+        sigmaM:    parseFloat(document.getElementById("cfg_sigmaM").value)    || 2.0,
+        useTail:   !!document.getElementById("cfg_useTail").checked,
+        tailKc:    parseFloat(document.getElementById("cfg_tailKc").value)    || 6.5,
+        tailW:     parseFloat(document.getElementById("cfg_tailW").value)     || 1.2,
+        tailA0:    parseFloat(document.getElementById("cfg_tailA0").value)    || 0.01
       };
-      // sanitize
-      if (!isFinite(cfg.kBase)) cfg.kBase = 1.0;
-      if (!isFinite(cfg.kStorm)) cfg.kStorm = 1.0;
-      if (!isFinite(cfg.betaFlare)) cfg.betaFlare = 0.7;
-      if (!isFinite(cfg.kX)) cfg.kX = 1.0;
-      if (!isFinite(cfg.kM)) cfg.kM = 0.5;
-      if (!isFinite(cfg.kL1)) cfg.kL1 = 0.16;
-      if (!isFinite(cfg.sigmaLat) || cfg.sigmaLat<=0) cfg.sigmaLat = 15.0;
-      if (!isFinite(cfg.sigmaM) || cfg.sigmaM<=0) cfg.sigmaM = 2.0;
-      if (!isFinite(cfg.tailKc)) cfg.tailKc = 6.5;
-      if (!isFinite(cfg.tailW) || cfg.tailW<=0) cfg.tailW = 1.2;
-      if (!isFinite(cfg.tailA0) || cfg.tailA0<0) cfg.tailA0 = 0.01;
-      return cfg;
     }
 
-    function applyConfigToUi(cfg) {
-      document.getElementById("cfg_kBase").value = cfg.kBase;
-      document.getElementById("cfg_kStorm").value = cfg.kStorm;
-      document.getElementById("cfg_betaFlare").value = cfg.betaFlare;
-      document.getElementById("cfg_kX").value = cfg.kX;
-      document.getElementById("cfg_kM").value = cfg.kM;
-      document.getElementById("cfg_kL1").value = cfg.kL1;
-      document.getElementById("cfg_sigmaLat").value = cfg.sigmaLat;
-      document.getElementById("cfg_sigmaM").value = cfg.sigmaM;
-      document.getElementById("cfg_useTail").checked = !!cfg.useTail;
-      document.getElementById("cfg_tailKc").value = cfg.tailKc;
-      document.getElementById("cfg_tailW").value = cfg.tailW;
-      document.getElementById("cfg_tailA0").value = cfg.tailA0;
+    function setConfigToUI(cfg) {
+      if (!cfg) return;
+      if (cfg.kBase     != null) document.getElementById("cfg_kBase").value     = cfg.kBase;
+      if (cfg.kStorm    != null) document.getElementById("cfg_kStorm").value    = cfg.kStorm;
+      if (cfg.betaFlare != null) document.getElementById("cfg_betaFlare").value = cfg.betaFlare;
+      if (cfg.kX        != null) document.getElementById("cfg_kX").value        = cfg.kX;
+      if (cfg.kM        != null) document.getElementById("cfg_kM").value        = cfg.kM;
+      if (cfg.kL1       != null) document.getElementById("cfg_kL1").value       = cfg.kL1;
+
+      if (cfg.sigmaLat  != null) document.getElementById("cfg_sigmaLat").value  = cfg.sigmaLat;
+      if (cfg.sigmaM    != null) document.getElementById("cfg_sigmaM").value    = cfg.sigmaM;
+
+      if (cfg.useTail   != null) document.getElementById("cfg_useTail").checked = !!cfg.useTail;
+      if (cfg.tailKc    != null) document.getElementById("cfg_tailKc").value    = cfg.tailKc;
+      if (cfg.tailW     != null) document.getElementById("cfg_tailW").value     = cfg.tailW;
+      if (cfg.tailA0    != null) document.getElementById("cfg_tailA0").value    = cfg.tailA0;
     }
 
     function saveConfig() {
-      const cfg = readConfigFromUi();
+      const cfg = getConfigFromUI();
       localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(cfg));
-      logInfo("設定を保存しました。");
+      logInfo("設定（係数）を保存しました。");
+      updateFormulaText();
     }
 
-    function loadConfig(force=false) {
-      const raw = localStorage.getItem(STORAGE_KEY_CONFIG);
-      if (!raw) { if(force) logInfo("保存された設定がありません。"); return; }
-      try {
-        const cfg = JSON.parse(raw);
-        applyConfigToUi(cfg);
-        if(force) logInfo("保存された設定を読み込みました。");
-      } catch (e) {
-        console.error(e);
+    function loadConfig(verbose=false) {
+      const s = localStorage.getItem(STORAGE_KEY_CONFIG);
+      if (!s) {
+        if (verbose) logInfo("保存された設定はありません（初期値のまま）。");
+        return;
       }
+      try {
+        const cfg = JSON.parse(s);
+        setConfigToUI(cfg);
+        if (verbose) logInfo("保存された設定を読み込みました。");
+      } catch(e) {
+        console.warn("設定の復元に失敗:", e);
+        if (verbose) logInfo("保存設定の読み込みに失敗しました。");
+      }
+      updateFormulaText();
     }
 
-    /* ============ Color scale 保存/反映 ============ */
-    function readTecScaleFromUi() {
-      return [
-        { limit:+document.getElementById("tLimit1").value, color:document.getElementById("tColor1").value },
-        { limit:+document.getElementById("tLimit2").value, color:document.getElementById("tColor2").value },
-        { limit:+document.getElementById("tLimit3").value, color:document.getElementById("tColor3").value },
-        { limit:+document.getElementById("tLimit4").value, color:document.getElementById("tColor4").value },
-      ];
+    /* ============ TEC/GPS色スケール ============ */
+    function loadColorScales() {
+      try {
+        const s1 = localStorage.getItem(STORAGE_KEY_TCOL);
+        if (s1) gTecColorScale = JSON.parse(s1);
+      } catch {}
+      try {
+        const s2 = localStorage.getItem(STORAGE_KEY_GCOL);
+        if (s2) gGpsColorScale = JSON.parse(s2);
+      } catch {}
+      syncColorScaleUiFromState();
     }
-    function readGpsScaleFromUi() {
-      return [
-        { limit:+document.getElementById("gLimit1").value, color:document.getElementById("gColor1").value },
-        { limit:+document.getElementById("gLimit2").value, color:document.getElementById("gColor2").value },
-        { limit:+document.getElementById("gLimit3").value, color:document.getElementById("gColor3").value },
-        { limit:+document.getElementById("gLimit4").value, color:document.getElementById("gColor4").value },
-      ];
+
+    function syncColorScaleUiFromState() {
+      // TEC
+      document.getElementById("tLimit1").value = gTecColorScale[0].limit;
+      document.getElementById("tLimit2").value = gTecColorScale[1].limit;
+      document.getElementById("tLimit3").value = gTecColorScale[2].limit;
+      document.getElementById("tLimit4").value = gTecColorScale[3].limit;
+      document.getElementById("tColor1").value = gTecColorScale[0].color;
+      document.getElementById("tColor2").value = gTecColorScale[1].color;
+      document.getElementById("tColor3").value = gTecColorScale[2].color;
+      document.getElementById("tColor4").value = gTecColorScale[3].color;
+
+      // GPS
+      document.getElementById("gLimit1").value = gGpsColorScale[0].limit;
+      document.getElementById("gLimit2").value = gGpsColorScale[1].limit;
+      document.getElementById("gLimit3").value = gGpsColorScale[2].limit;
+      document.getElementById("gLimit4").value = gGpsColorScale[3].limit;
+      document.getElementById("gColor1").value = gGpsColorScale[0].color;
+      document.getElementById("gColor2").value = gGpsColorScale[1].color;
+      document.getElementById("gColor3").value = gGpsColorScale[2].color;
+      document.getElementById("gColor4").value = gGpsColorScale[3].color;
     }
+
     function applyTecColorScale() {
-      gTecColorScale = readTecScaleFromUi();
+      gTecColorScale = [
+        { limit: +document.getElementById("tLimit1").value, color: document.getElementById("tColor1").value },
+        { limit: +document.getElementById("tLimit2").value, color: document.getElementById("tColor2").value },
+        { limit: +document.getElementById("tLimit3").value, color: document.getElementById("tColor3").value },
+        { limit: +document.getElementById("tLimit4").value, color: document.getElementById("tColor4").value },
+      ].map(x => ({ limit: (isFinite(x.limit)?x.limit:0), color:x.color }));
       localStorage.setItem(STORAGE_KEY_TCOL, JSON.stringify(gTecColorScale));
       updateLegend();
       requestDraw();
       logInfo("TEC色スケールを反映しました。");
-    }
-    function applyGpsColorScale() {
-      gGpsColorScale = readGpsScaleFromUi();
-      localStorage.setItem(STORAGE_KEY_GCOL, JSON.stringify(gGpsColorScale));
-      updateLegend();
-      requestDraw();
-      logInfo("GPS色スケールを反映しました。");
     }
     function resetTecColorScale() {
       gTecColorScale = [
@@ -1401,11 +1410,24 @@
         { limit: 60,  color: "#ff9900" },
         { limit: 120, color: "#ff0000" }
       ];
-      document.getElementById("tLimit1").value = 10;  document.getElementById("tColor1").value = "#00ff00";
-      document.getElementById("tLimit2").value = 30;  document.getElementById("tColor2").value = "#ffff00";
-      document.getElementById("tLimit3").value = 60;  document.getElementById("tColor3").value = "#ff9900";
-      document.getElementById("tLimit4").value = 120; document.getElementById("tColor4").value = "#ff0000";
-      applyTecColorScale();
+      localStorage.setItem(STORAGE_KEY_TCOL, JSON.stringify(gTecColorScale));
+      syncColorScaleUiFromState();
+      updateLegend();
+      requestDraw();
+      logInfo("TEC色スケールを初期化しました。");
+    }
+
+    function applyGpsColorScale() {
+      gGpsColorScale = [
+        { limit: +document.getElementById("gLimit1").value, color: document.getElementById("gColor1").value },
+        { limit: +document.getElementById("gLimit2").value, color: document.getElementById("gColor2").value },
+        { limit: +document.getElementById("gLimit3").value, color: document.getElementById("gColor3").value },
+        { limit: +document.getElementById("gLimit4").value, color: document.getElementById("gColor4").value },
+      ].map(x => ({ limit: (isFinite(x.limit)?x.limit:0), color:x.color }));
+      localStorage.setItem(STORAGE_KEY_GCOL, JSON.stringify(gGpsColorScale));
+      updateLegend();
+      requestDraw();
+      logInfo("GPS色スケールを反映しました。");
     }
     function resetGpsColorScale() {
       gGpsColorScale = [
@@ -1414,939 +1436,1028 @@
         { limit: 20, color: "#ff9900" },
         { limit: 40, color: "#ff0000" }
       ];
-      document.getElementById("gLimit1").value = 5;  document.getElementById("gColor1").value = "#00ff00";
-      document.getElementById("gLimit2").value = 10; document.getElementById("gColor2").value = "#ffff00";
-      document.getElementById("gLimit3").value = 20; document.getElementById("gColor3").value = "#ff9900";
-      document.getElementById("gLimit4").value = 40; document.getElementById("gColor4").value = "#ff0000";
-      applyGpsColorScale();
-    }
-
-    function loadColorScales() {
-      try {
-        const t = localStorage.getItem(STORAGE_KEY_TCOL);
-        if (t) gTecColorScale = JSON.parse(t);
-        const g = localStorage.getItem(STORAGE_KEY_GCOL);
-        if (g) gGpsColorScale = JSON.parse(g);
-      } catch {}
-      // reflect to UI
-      const tS = gTecColorScale;
-      if (tS?.length>=4) {
-        document.getElementById("tLimit1").value = tS[0].limit; document.getElementById("tColor1").value = tS[0].color;
-        document.getElementById("tLimit2").value = tS[1].limit; document.getElementById("tColor2").value = tS[1].color;
-        document.getElementById("tLimit3").value = tS[2].limit; document.getElementById("tColor3").value = tS[2].color;
-        document.getElementById("tLimit4").value = tS[3].limit; document.getElementById("tColor4").value = tS[3].color;
-      }
-      const gS = gGpsColorScale;
-      if (gS?.length>=4) {
-        document.getElementById("gLimit1").value = gS[0].limit; document.getElementById("gColor1").value = gS[0].color;
-        document.getElementById("gLimit2").value = gS[1].limit; document.getElementById("gColor2").value = gS[1].color;
-        document.getElementById("gLimit3").value = gS[2].limit; document.getElementById("gColor3").value = gS[2].color;
-        document.getElementById("gLimit4").value = gS[3].limit; document.getElementById("gColor4").value = gS[3].color;
-      }
-    }
-
-    /* ============ Leaflet / Canvas Overlay ============ */
-    function initMap() {
-      map = L.map("tecMap", {
-        zoomControl: true,
-        worldCopyJump: true,
-        preferCanvas: true
-      }).setView([20, 130], 3);
-
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 8,
-        attribution: "© OpenStreetMap contributors"
-      }).addTo(map);
-
-      const container = document.getElementById("tecMap");
-      tecCanvas = document.createElement("canvas");
-      tecCanvas.className = "tec-canvas-overlay";
-      tecCtx = tecCanvas.getContext("2d");
-      container.appendChild(tecCanvas);
-
-      const resize = () => {
-        const r = container.getBoundingClientRect();
-        tecCanvas.width = Math.max(1, Math.floor(r.width));
-        tecCanvas.height = Math.max(1, Math.floor(r.height));
-        requestDraw();
-      };
-      window.addEventListener("resize", resize);
-      map.on("move zoom resize", () => requestDraw());
-      resize();
-
-      // click: nearest grid cell
-      map.on("click", (ev) => {
-        if (!gGrid || !gForecastFrames?.length) return;
-        const lat = ev.latlng.lat, lon = ((ev.latlng.lng + 180) % 360) - 180;
-
-        const i = nearestIndex(gGrid.latArr, lat);
-        const j = nearestIndexLon(gGrid.lonArr, lon);
-
-        const tec = gForecastFrames[currentStepIndex]?.[i]?.[j];
-        const cfg = readConfigFromUi();
-        const gps = isFinite(tec) ? (tec * cfg.kL1) : NaN;
-
-        document.getElementById("pointInfo").textContent =
-          `lat=${gGrid.latArr[i].toFixed(2)}, lon=${gGrid.lonArr[j].toFixed(2)}\n`+
-          `TEC=${isFinite(tec)?tec.toFixed(1):"NaN"} TECU\n`+
-          `GPS L1 err≈${isFinite(gps)?gps.toFixed(2):"NaN"} m\n`+
-          `t=${currentStepIndex} / UTC=${gForecastTimes?.[currentStepIndex]?.toISOString()?.replace(".000Z","Z") || "--"}`;
-      });
-
-      // legend control
-      tecLegendControl = L.control({ position: "bottomright" });
-      tecLegendControl.onAdd = function() {
-        const div = L.DomUtil.create("div", "leaflet-control tec-legend");
-        div.innerHTML = `
-          <div class="tec-legend-title">Legend</div>
-          <div style="display:flex; gap:10px; align-items:center;">
-            <div>
-              <div id="legendBar" class="tec-legend-bar"></div>
-              <div id="legendLabels" class="tec-legend-labels">
-                <span id="legendMin">0</span><span id="legendMax">--</span>
-              </div>
-              <div class="small" id="legendUnit" style="text-align:center; margin-top:2px;">TECU</div>
-            </div>
-          </div>
-        `;
-        return div;
-      };
-      tecLegendControl.addTo(map);
-      updateLegend();
-    }
-
-    function updateLegend() {
-      const bar = document.getElementById("legendBar");
-      const minEl = document.getElementById("legendMin");
-      const maxEl = document.getElementById("legendMax");
-      const unitEl = document.getElementById("legendUnit");
-      if (!bar || !minEl || !maxEl || !unitEl) return;
-
-      const scale = (mapMode === "gps") ? gGpsColorScale : gTecColorScale;
-      const unit = (mapMode === "gps") ? "m" : "TECU";
-      unitEl.textContent = unit;
-
-      // vertical gradient
-      const stops = [];
-      for (let i=0;i<scale.length;i++){
-        const p = (i/(scale.length-1))*100;
-        stops.push(`${scale[i].color} ${p}%`);
-      }
-      bar.style.background = `linear-gradient(to top, ${stops.join(",")})`;
-
-      minEl.textContent = "0";
-      maxEl.textContent = String(scale[scale.length-1].limit);
-    }
-
-    function nearestIndex(arr, v) {
-      let best=0, bestD=1e99;
-      for (let i=0;i<arr.length;i++){
-        const d = Math.abs(arr[i]-v);
-        if (d<bestD){ bestD=d; best=i; }
-      }
-      return best;
-    }
-    function nearestIndexLon(arr, lon) {
-      let best=0, bestD=1e99;
-      for (let j=0;j<arr.length;j++){
-        let d = Math.abs(arr[j]-lon);
-        d = Math.min(d, 360-d);
-        if (d<bestD){ bestD=d; best=j; }
-      }
-      return best;
-    }
-
-    function hexToRgb(hex) {
-      const s = String(hex||"").replace("#","").trim();
-      if (s.length!==6) return [255,255,255];
-      const r = parseInt(s.slice(0,2),16);
-      const g = parseInt(s.slice(2,4),16);
-      const b = parseInt(s.slice(4,6),16);
-      return [r,g,b].map(x=>isFinite(x)?x:255);
-    }
-
-    function colorForValue(v, scale) {
-      if (!isFinite(v) || v<=0) return [0,0,0,0];
-      const max = scale[scale.length-1].limit;
-      const vv = clamp(v, 0, max);
-
-      let k = 0;
-      while (k < scale.length && vv > scale[k].limit) k++;
-      if (k === 0) {
-        const [r,g,b] = hexToRgb(scale[0].color);
-        return [r,g,b,255];
-      }
-      if (k >= scale.length) {
-        const [r,g,b] = hexToRgb(scale[scale.length-1].color);
-        return [r,g,b,255];
-      }
-
-      const a = scale[k-1], b0 = scale[k];
-      const v0 = a.limit, v1 = b0.limit;
-      const t = (vv - v0) / Math.max(1e-9, (v1 - v0));
-      const [r0,g0,b00] = hexToRgb(a.color);
-      const [r1,g1,b11] = hexToRgb(b0.color);
-      const r = Math.round(r0 + (r1-r0)*t);
-      const g = Math.round(g0 + (g1-g0)*t);
-      const b = Math.round(b00 + (b11-b00)*t);
-      return [r,g,b,255];
-    }
-
-    function drawTecOverlay() {
-      if (!map || !tecCanvas || !tecCtx) return;
-      tecCtx.clearRect(0,0,tecCanvas.width, tecCanvas.height);
-
-      if (!gGrid || !gForecastFrames?.length) return;
-      const frame = gForecastFrames[currentStepIndex];
-      if (!frame) return;
-
-      const cfg = readConfigFromUi();
-      const scale = (mapMode === "gps") ? gGpsColorScale : gTecColorScale;
-
-      const img = tecCtx.createImageData(tecCanvas.width, tecCanvas.height);
-      const data = img.data;
-
-      // 1pxごとに最近傍（雑だけど確実・まず動く版）
-      for (let y=0; y<tecCanvas.height; y++) {
-        for (let x=0; x<tecCanvas.width; x++) {
-          const latlng = map.containerPointToLatLng([x, y]);
-          const lat = latlng.lat;
-          let lon = ((latlng.lng + 180) % 360) - 180;
-
-          const i = nearestIndex(gGrid.latArr, lat);
-          const j = nearestIndexLon(gGrid.lonArr, lon);
-
-          let v = frame[i][j];
-          if (mapMode === "gps") v = isFinite(v) ? (v * cfg.kL1) : NaN;
-
-          const [r,g,b,a] = colorForValue(v, scale);
-          const idx = (y*tecCanvas.width + x)*4;
-          data[idx+0] = r;
-          data[idx+1] = g;
-          data[idx+2] = b;
-          data[idx+3] = Math.round(a * tecAlpha);
-        }
-      }
-      tecCtx.putImageData(img, 0, 0);
-    }
-
-    /* ============ UI handlers ============ */
-    function onTecAlphaChange() {
-      tecAlpha = +document.getElementById("tecAlpha").value;
-      requestDraw();
-    }
-    function changeMapMode() {
-      mapMode = document.getElementById("mapModeSelect").value;
+      localStorage.setItem(STORAGE_KEY_GCOL, JSON.stringify(gGpsColorScale));
+      syncColorScaleUiFromState();
       updateLegend();
       requestDraw();
-    }
-    function onSliderChange() {
-      const s = +document.getElementById("timeSlider").value;
-      currentStepIndex = clamp(s, 0, N_STEPS);
-      const tHour = (currentStepIndex * DT_MINUTES)/60;
-      document.getElementById("timeLabel").textContent = `t = ${tHour.toFixed(1)} h`;
-
-      const t = gForecastTimes?.[currentStepIndex];
-      document.getElementById("utcLabel").textContent = "UTC: " + (t ? t.toISOString().replace(".000Z","Z") : "--");
-      setOverlayTime(t);
-
-      const kpF = getKpForecastAt(t);
-      const kpB = getKpBaseAt(t);
-      document.getElementById("kpNowLabel").textContent = `KpF=${isFinite(kpF)?kpF.toFixed(2):"--"} / KpB=${isFinite(kpB)?kpB.toFixed(2):"--"}`;
-
-      requestDraw();
+      logInfo("GPS色スケールを初期化しました。");
     }
 
-    /* ============ Focus region ============ */
-    const REGIONS = {
-      japan:        { center:[36.2, 138.0], zoom:5 },
-      northAmerica: { center:[39.0,-98.0], zoom:4 },
-      southAmerica: { center:[-15.0,-60.0], zoom:4 },
-      europe:       { center:[52.0, 10.0], zoom:4 },
-      africa:       { center:[ 0.0, 20.0], zoom:4 },
-      australia:    { center:[-25.0,135.0], zoom:4 }
-    };
-    function focusRegion(key) {
-      const r = REGIONS[key];
-      if (!r || !map) return;
-      map.setView(r.center, r.zoom);
-    }
-    function applyManualFocus() {
-      if (!map) return;
-      const latMin = +document.getElementById("focusLatMin").value;
-      const latMax = +document.getElementById("focusLatMax").value;
-      const lonMin = +document.getElementById("focusLonMin").value;
-      const lonMax = +document.getElementById("focusLonMax").value;
-      if (!isFinite(latMin)||!isFinite(latMax)||!isFinite(lonMin)||!isFinite(lonMax)) return;
-      const b = L.latLngBounds([latMin, lonMin],[latMax, lonMax]);
-      map.fitBounds(b, { padding:[10,10] });
-    }
-    function resetFocus() {
-      if (!map) return;
-      map.setView([20,130], 3);
-    }
-
-    /* ============ Time helpers ============ */
+    /* ============================
+     *  NOAA time_tag パース（堅牢化）
+     * ============================ */
     function toUtcDateFromSwpcTimeTag(s) {
-      const str = String(s||"").trim();
+      // 例: "2026-01-21 00:00:00.000" / "2026-01-21T00:00:00Z" / "2026-01-21 00:00:00"
+      const str = String(s || "").trim();
       if (!str) return null;
-      const d = new Date(str);
-      if (!isNaN(d.getTime())) return d;
 
-      // "2025-11-26 00:00:00.000"
-      const m = str.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
-      if (m) return new Date(Date.UTC(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +m[6]));
+      // ISO
+      const d1 = new Date(str);
+      if (!isNaN(d1.getTime())) return d1;
+
+      // "YYYY-MM-DD HH:MM:SS(.sss)"
+      const m = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/);
+      if (m) {
+        const y  = +m[1], mo = +m[2], da = +m[3];
+        const hh = +m[4], mm = +m[5], ss = +m[6];
+        const ms = m[7] ? +String(m[7]).padEnd(3,"0") : 0;
+        return new Date(Date.UTC(y, mo-1, da, hh, mm, ss, ms));
+      }
       return null;
     }
-    function minutesOfDayUTC(d) {
-      return d.getUTCHours()*60 + d.getUTCMinutes() + d.getUTCSeconds()/60;
-    }
 
-    /* ============ Kp: NOAA 3-day text parser (ゆるめ) ============ */
-    function parseNoaa3dayKpText(txt) {
-      const lines = String(txt||"").split(/\r?\n/);
+    /* ============================
+     *  NOAA 3-day geomag forecast パース
+     * ============================ */
+    function parseNoaa3DayGeomag(text) {
+      // 目標：3日分のKp予報（最大値）を Date(UTC日)→Kp へ
+      // フォーマットは変動するので、日付行と "Kp" の数値列を保守的に抽出
+      const lines = String(text || "").split(/\r?\n/);
+
+      // 例: "Jan 23  5" のような行が入る場合もあるので、月英字/数字の両対応
+      const monthMap = {
+        jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11
+      };
+
       const out = [];
-
-      // ざっくり：行内に "YYYY-MM-DD" と "UT" と Kp っぽい数字が並ぶものを拾う
       for (const ln of lines) {
-        const line = ln.trim();
-        const m = line.match(/(\d{4})\s+(\w{3})\s+(\d{1,2})/); // "2026 Jan 23" っぽい
-        const m2 = line.match(/(\d{4})-(\d{2})-(\d{2})/);     // "2026-01-23"
-        const kpNums = line.match(/\b(\d(?:\.\d)?)\b/g);
-
-        if (!(m||m2) || !kpNums || kpNums.length < 8) continue;
-
-        let y, mo, da;
-        if (m2) { y=+m2[1]; mo=+m2[2]; da=+m2[3]; }
-        else {
-          y = +m[1]; da = +m[3];
-          const mon = String(m[2]).toLowerCase();
-          const mapMon = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
-          mo = mapMon[mon.slice(0,3)] || 1;
+        // "2026 Jan 23" など
+        let m = ln.match(/(\d{4})\s+([A-Za-z]{3})\s+(\d{1,2})/);
+        if (m) {
+          const y = +m[1];
+          const mo = monthMap[m[2].toLowerCase()];
+          const da = +m[3];
+          const nums = ln.match(/[-+]?\d+(\.\d+)?/g) || [];
+          // 年/月/日も数値に含まれるので、最後の1個〜2個あたりをKp候補として見る
+          // だいたい Kp=0..9
+          const kpCand = nums.map(x=>+x).filter(v => v>=0 && v<=9.1);
+          const kp = kpCand.length ? kpCand[kpCand.length-1] : null;
+          if (kp != null) out.push({ day: new Date(Date.UTC(y, mo, da, 0,0,0)), kp });
+          continue;
         }
 
-        // 8つ（0-3,3-6,...21-24）想定：最初の8つだけ
-        const vals = kpNums.slice(0,8).map(x=>+x).filter(x=>isFinite(x));
-        if (vals.length < 8) continue;
-
-        for (let k=0;k<8;k++){
-          const hh = k*3;
-          out.push({ t: new Date(Date.UTC(y, mo-1, da, hh, 0, 0)), kp: vals[k] });
+        // "Jan 23  2026" など
+        m = ln.match(/([A-Za-z]{3})\s+(\d{1,2}).*?(\d{4})/);
+        if (m) {
+          const mo = monthMap[m[1].toLowerCase()];
+          const da = +m[2];
+          const y  = +m[3];
+          const nums = ln.match(/[-+]?\d+(\.\d+)?/g) || [];
+          const kpCand = nums.map(x=>+x).filter(v => v>=0 && v<=9.1);
+          const kp = kpCand.length ? kpCand[kpCand.length-1] : null;
+          if (kp != null) out.push({ day: new Date(Date.UTC(y, mo, da, 0,0,0)), kp });
+          continue;
         }
       }
 
+      // 重複は日キーで最新優先
+      const byKey = new Map();
+      for (const r of out) {
+        const k = toDayKeyUtc(r.day);
+        byKey.set(k, r.kp);
+      }
+      const keys = [...byKey.keys()].sort();
+      return keys.map(k => ({ dayKey:k, day: new Date(k+"T00:00:00Z"), kp: byKey.get(k) }));
+    }
+
+    /* ============================
+     *  Base用Kp（noaa-planetary-k-index.json）パース
+     * ============================ */
+    function parseNoaaPlanetaryKIndexJson(textOrJson) {
+      let arr = textOrJson;
+      if (typeof textOrJson === "string") {
+        try { arr = JSON.parse(textOrJson); } catch { return []; }
+      }
+      if (!Array.isArray(arr)) return [];
+      // 先頭行がヘッダの場合あり
+      const out = [];
+      for (let i=0;i<arr.length;i++) {
+        const row = arr[i];
+        if (!Array.isArray(row) || row.length < 2) continue;
+        const t = toUtcDateFromSwpcTimeTag(row[0]);
+        const kp = parseFloat(row[1]);
+        if (!t || !isFinite(kp)) continue;
+        out.push({ t, kp });
+      }
       out.sort((a,b)=>a.t-b.t);
       return out;
     }
 
-    function getKpForecastAt(t) {
-      if (!(t instanceof Date) || isNaN(t.getTime())) return NaN;
-      if (!gKpSeries || !gKpSeries.length) return NaN;
-      return interpTimeSeries(gKpSeries, t);
-    }
-
-    function getKpBaseAt(t) {
-      if (!(t instanceof Date) || isNaN(t.getTime())) return NaN;
-
-      // 日周（Base側）：runForecast内で作ったTOD補間があればそれ優先
-      if (gBaseKpTod && Array.isArray(gBaseKpTod.mins) && gBaseKpTod.mins.length>=2) {
-        return interpTod(gBaseKpTod.mins, gBaseKpTod.vals, minutesOfDayUTC(t));
+    /* ============================
+     *  Base用フレア JSON パース
+     * ============================ */
+    function parseBaseFlareJson(text) {
+      if (!text) return [];
+      let arr;
+      try { arr = JSON.parse(text); } catch { return []; }
+      if (!Array.isArray(arr)) return [];
+      const out = [];
+      for (const o of arr) {
+        const t = toUtcDateFromSwpcTimeTag(o.time || o.t || o.time_tag || "");
+        const Px = parseFloat(o.Px ?? o.px ?? 0);
+        const Pm = parseFloat(o.Pm ?? o.pm ?? 0);
+        if (!t) continue;
+        out.push({ t, Px: (isFinite(Px)?Px:0), Pm:(isFinite(Pm)?Pm:0) });
       }
-      if (!gBaseKpSeries || !gBaseKpSeries.length) return NaN;
-      return interpTimeSeries(gBaseKpSeries, t);
+      out.sort((a,b)=>a.t-b.t);
+      return out;
     }
 
-    function getBaseFlareAt(t) {
-      if (!(t instanceof Date) || isNaN(t.getTime())) return {Px:0,Pm:0};
-      if (gBaseFlareTod && gBaseFlareTod.mins?.length>=2) {
-        const m = minutesOfDayUTC(t);
-        const Px = interpTod(gBaseFlareTod.mins, gBaseFlareTod.Px, m);
-        const Pm = interpTod(gBaseFlareTod.mins, gBaseFlareTod.Pm, m);
-        return {Px, Pm};
+    /* ============================
+     *  TOD（日周）化：時刻-of-dayをキーに線形補間できる形へ
+     * ============================ */
+    function buildTodSeriesFromTimeSeries(series, valKey, stepMinutes=30) {
+      // series: [{t:Date, kp:...}] など
+      // 戻り：{ stepMinutes, values[1440/step], maskValid }
+      const n = Math.round(24*60/stepMinutes);
+      const values = new Array(n).fill(null);
+
+      // 同じ日のデータが複数ある想定（1日分を期待）だが、複数日でも「最頻日」を採用
+      // まず日キーで分類
+      const byDay = new Map();
+      for (const r of series) {
+        const dk = toDayKeyUtc(r.t);
+        if (!byDay.has(dk)) byDay.set(dk, []);
+        byDay.get(dk).push(r);
       }
-      if (!gBaseFlareSeries || !gBaseFlareSeries.length) return {Px:0,Pm:0};
-      const Px = interpTimeSeries(gBaseFlareSeries.map(x=>({t:x.t, v:x.Px})), t);
-      const Pm = interpTimeSeries(gBaseFlareSeries.map(x=>({t:x.t, v:x.Pm})), t);
-      return {Px:isFinite(Px)?Px:0, Pm:isFinite(Pm)?Pm:0};
-    }
+      if (!byDay.size) return { stepMinutes, values };
 
-    function interpTimeSeries(series, t) {
-      // series: [{t:Date, kp:number}] or [{t:Date, v:number}]
-      if (!series || series.length===0) return NaN;
-      const tt = t.getTime();
-
-      let i1 = 0;
-      while (i1 < series.length && series[i1].t.getTime() <= tt) i1++;
-      if (i1 === 0) return series[0].kp ?? series[0].v;
-      if (i1 >= series.length) return series[series.length-1].kp ?? series[series.length-1].v;
-
-      const a = series[i1-1], b = series[i1];
-      const t0 = a.t.getTime(), t1 = b.t.getTime();
-      const v0 = a.kp ?? a.v;
-      const v1 = b.kp ?? b.v;
-      const u = (tt - t0) / Math.max(1, (t1 - t0));
-      return v0 + (v1 - v0) * u;
-    }
-
-    function buildTodInterpolatorFromAbsolute(series, field="kp") {
-      // 1日分が来る想定だが、来ない場合も「minsで並べて補間」する
-      if (!Array.isArray(series) || series.length<2) return null;
-      const mins = [];
-      const vals = [];
-
-      for (const x of series) {
-        const t = x.t;
-        if (!(t instanceof Date) || isNaN(t.getTime())) continue;
-        mins.push(minutesOfDayUTC(t));
-        vals.push(+x[field]);
+      // 最も件数が多い日を採用
+      let bestKey = null, bestN = -1;
+      for (const [k, v] of byDay.entries()) {
+        if (v.length > bestN) { bestN = v.length; bestKey = k; }
       }
-      if (mins.length < 2) return null;
+      const rows = byDay.get(bestKey).slice().sort((a,b)=>a.t-b.t);
 
-      // 0..1440 で循環補間したいので、端を補強（先頭+1440）
-      const zipped = mins.map((m,i)=>({m, v:vals[i]})).sort((a,b)=>a.m-b.m);
-
-      const m2 = zipped.map(z=>z.m);
-      const v2 = zipped.map(z=>z.v);
-
-      // wrap補強
-      m2.push(zipped[0].m + 1440);
-      v2.push(zipped[0].v);
-
-      return { mins:m2, vals:v2 };
-    }
-
-    function buildTodFlareFromAbsolute(series) {
-      if (!Array.isArray(series) || series.length<2) return null;
-      const mins = [];
-      const Px = [];
-      const Pm = [];
-      for (const x of series) {
-        const t = x.t;
-        if (!(t instanceof Date) || isNaN(t.getTime())) continue;
-        mins.push(minutesOfDayUTC(t));
-        Px.push(+x.Px);
-        Pm.push(+x.Pm);
+      // 30分グリッドに最近傍→後で補間
+      for (const r of rows) {
+        const hh = r.t.getUTCHours();
+        const mm = r.t.getUTCMinutes();
+        const idx = Math.round((hh*60+mm)/stepMinutes);
+        const k = clamp(idx, 0, n-1);
+        const v = r[valKey];
+        values[k] = (isFinite(v) ? v : null);
       }
-      if (mins.length<2) return null;
 
-      const zipped = mins.map((m,i)=>({m, Px:Px[i], Pm:Pm[i]})).sort((a,b)=>a.m-b.m);
-      const m2 = zipped.map(z=>z.m);
-      const x2 = zipped.map(z=>z.Px);
-      const m3 = zipped.map(z=>z.Pm);
+      // 線形補間（循環：両端も繋ぐ）
+      const out = values.slice();
+      const findNext = (i) => {
+        for (let k=1;k<=n;k++) {
+          const j = (i+k)%n;
+          if (out[j] != null) return { j, k };
+        }
+        return null;
+      };
 
-      // wrap補強
-      m2.push(zipped[0].m + 1440);
-      x2.push(zipped[0].Px);
-      m3.push(zipped[0].Pm);
+      for (let i=0;i<n;i++) {
+        if (out[i] != null) continue;
+        // 前（循環）探す
+        let prev = null;
+        for (let k=1;k<=n;k++) {
+          const j = (i-k+n)%n;
+          if (out[j] != null) { prev = { j, k }; break; }
+        }
+        const next = findNext(i);
+        if (!prev || !next) continue;
 
-      return { mins:m2, Px:x2, Pm:m3 };
-    }
-
-    function interpTod(minsArr, valsArr, m) {
-      if (!minsArr || minsArr.length<2) return NaN;
-      let mm = m;
-      while (mm < minsArr[0]) mm += 1440;
-      while (mm > minsArr[minsArr.length-1]) mm -= 1440;
-
-      let i1 = 0;
-      while (i1 < minsArr.length && minsArr[i1] <= mm) i1++;
-      if (i1 === 0) return valsArr[0];
-      if (i1 >= minsArr.length) return valsArr[valsArr.length-1];
-
-      const m0 = minsArr[i1-1], m1 = minsArr[i1];
-      const v0 = valsArr[i1-1], v1 = valsArr[i1];
-      const u = (mm - m0) / Math.max(1e-9, (m1 - m0));
-      return v0 + (v1 - v0)*u;
-    }
-
-    /* ============ Flare forecast from Deep Flare Net (簡易) ============ */
-    function getForecastFlareStrength01() {
-      // 9領域の確率を合算（使うチェックの平均）
-      let sx=0, sm=0, n=0;
-      for (let k=1;k<=9;k++){
-        const use = document.getElementById("fu"+k).checked;
-        if (!use) continue;
-        const px = +document.getElementById("fx"+k).value;
-        const pm = +document.getElementById("fm"+k).value;
-        if (isFinite(px)) sx += px;
-        if (isFinite(pm)) sm += pm;
-        n++;
+        const v0 = out[prev.j];
+        const v1 = out[next.j];
+        const total = prev.k + next.k;
+        const frac = prev.k / total;
+        out[i] = v0 + (v1 - v0) * frac;
       }
-      if (n===0) return {X01:0, M01:0};
-      const X01 = clamp((sx/n)/100, 0, 1);
-      const M01 = clamp((sm/n)/100, 0, 1);
-      return {X01, M01};
+
+      // まだnullが残るなら全部平均で埋め
+      const mean = out.filter(v=>v!=null).reduce((a,b)=>a+b,0) / Math.max(1,out.filter(v=>v!=null).length);
+      for (let i=0;i<n;i++) if (out[i]==null) out[i]=mean;
+
+      return { dayKey: bestKey, stepMinutes, values: out };
     }
 
-    /* ============ SStorm (Mukhtarov-like) ============ */
-    function gauss(x, mu, sig) {
-      const z = (x-mu)/Math.max(1e-9, sig);
+    function todValueAt(tod, tUtc) {
+      if (!tod || !tod.values || !tod.values.length) return null;
+      const step = tod.stepMinutes || 30;
+      const n = tod.values.length;
+      const mins = tUtc.getUTCHours()*60 + tUtc.getUTCMinutes();
+      const x = mins / step;
+      const i0 = Math.floor(x) % n;
+      const i1 = (i0 + 1) % n;
+      const f = x - Math.floor(x);
+      const v0 = tod.values[i0];
+      const v1 = tod.values[i1];
+      return v0 + (v1 - v0) * f;
+    }
+
+    /* ============================
+     *  NOAA 12枚（2時間おき）のTOD化（30分で補間）
+     * ============================ */
+    function buildNoaaTecTodFrom12Frames(frames12, times12, stepMinutes=30) {
+      if (!frames12 || !frames12.length || !times12 || !times12.length) return null;
+      const n = Math.round(24*60/stepMinutes);
+      const out = new Array(n).fill(null);
+
+      // 2時間枠→30分枠に線形補間（グリッド単位で）
+      // まず 12 枠 index (0..11) を 0..24h に対応
+      // 30分枠 k の時刻-of-day を取り、前後2時間枠を見つける
+      const t0 = times12[0]; // prev day 00:00Z を期待
+      const dayStart = new Date(Date.UTC(t0.getUTCFullYear(), t0.getUTCMonth(), t0.getUTCDate(), 0,0,0));
+      for (let k=0;k<n;k++) {
+        const tk = new Date(dayStart.getTime() + k*stepMinutes*60*1000);
+        const mins = (tk - dayStart)/60000;
+        const x = mins / 120;         // 2時間刻み
+        let i0 = Math.floor(x);
+        let f  = x - i0;
+        if (i0 < 0) i0 = 0;
+        if (i0 >= 11) { i0 = 11; f = 0; }
+        const i1 = Math.min(11, i0+1);
+
+        const A = frames12[i0];
+        const B = frames12[i1];
+
+        // グリッドが同一前提（parseNoaaGloTecGeoJsonで2°×5°固定）
+        const g = { latArr:A.latArr, lonArr:A.lonArr, nLat:A.nLat, nLon:A.nLon, grid: null };
+        const grid = Array.from({length:g.nLat}, ()=>Array.from({length:g.nLon}, ()=>0));
+        for (let i=0;i<g.nLat;i++) {
+          for (let j=0;j<g.nLon;j++) {
+            const v0 = A.grid[i][j];
+            const v1 = B.grid[i][j];
+            const w0 = (isFinite(v0)?v0:0);
+            const w1 = (isFinite(v1)?v1:0);
+            grid[i][j] = w0 + (w1 - w0) * f;
+          }
+        }
+        g.grid = grid;
+        out[k] = g;
+      }
+      return { stepMinutes, frames: out, dayKey: toDayKeyUtc(dayStart), gridMeta: frames12[0] };
+    }
+
+    function noaaTecTodFrameAt(todTec, tUtc) {
+      if (!todTec || !todTec.frames || !todTec.frames.length) return null;
+      const step = todTec.stepMinutes || 30;
+      const n = todTec.frames.length;
+      const mins = tUtc.getUTCHours()*60 + tUtc.getUTCMinutes();
+      const idx = clamp(Math.round(mins/step), 0, n-1);
+      return todTec.frames[idx];
+    }
+
+    /* ============================
+     *  SStorm（rStorm）: Mukhtarov風（季節・緯度・Kp依存）＋tail
+     * ============================ */
+    function wrapMonth01(d) {
+      // 1..12
+      return d.getUTCMonth() + 1;
+    }
+
+    function gaussian(x, mu, sigma) {
+      const s = Math.max(1e-6, sigma);
+      const z = (x-mu)/s;
       return Math.exp(-0.5*z*z);
     }
-    function monthFromDateUTC(d) { return d.getUTCMonth()+1; }
 
-    // “rStorm” = multiplier (>=1)
-    function calc_rStorm(latDeg, month, kp, cfg) {
-      // lat envelope（中緯度が効きやすい想定）：±(15~25) 付近に山
-      const latAbs = Math.abs(latDeg);
-      const latCore = gauss(latAbs, 25, cfg.sigmaLat) + 0.35*gauss(latAbs, 55, cfg.sigmaLat*1.2);
+    function seasonalFactor(month, sigmaM) {
+      // 例：春分/秋分あたりがピーク、または冬/夏ピーク等の好みに合わせて mu を変えられる
+      // ここは「年2峰（3月/9月）」型：max(gauss(mu=3), gauss(mu=9))
+      const g1 = gaussian(month, 3.0, sigmaM);
+      const g2 = gaussian(month, 9.0, sigmaM);
+      return Math.max(g1, g2);
+    }
 
-      // seasonal envelope：春秋（3,9）に山（Mukhtarovの季節依存っぽく）
-      const s1 = gauss(month, 3, cfg.sigmaM);
-      const s2 = gauss(month, 9, cfg.sigmaM);
-      const season = clamp(s1 + s2, 0, 1.2);
+    function latFactor(latDeg, sigmaLat) {
+      // 低緯度～中緯度の嵐の強さ（例：±15〜25度付近）を盛るなら mu=20, mu=-20 の双峰
+      const gN = gaussian(latDeg,  20.0, sigmaLat);
+      const gS = gaussian(latDeg, -20.0, sigmaLat);
+      return Math.max(gN, gS);
+    }
 
-      // Kp response：静穏(<=3)はほぼ1、上がるほど増
-      const kk = Math.max(0, kp - 3.0);
-      const coreAmp = 0.06 * kk * kk; // ざっくり
+    function kpToRStormBase(kp) {
+      // Kp→嵐倍率の基本形（単調増加）
+      // 0..9 を想定、r>=1
+      const k = clamp(kp, 0, 9);
+      // 例：Kp=3で1.05、Kp=6で1.35、Kp=9で2.0 くらい
+      return 1.0 + 0.02*k*k + 0.01*k;
+    }
 
-      let r = 1.0 + coreAmp * latCore * season;
+    function tailFactor(kp, cfg) {
+      // スーパーストーム尾部：Kp> Kc で急増（ロジスティック/指数的）
+      if (!cfg.useTail) return 1.0;
+      const Kc = cfg.tailKc;
+      const w  = Math.max(0.05, cfg.tailW);
+      const A0 = Math.max(0.0, cfg.tailA0);
 
-      // superstorm tail（KpがKcを超えると尾部が立つ）
-      if (cfg.useTail) {
-        const x = (kp - cfg.tailKc) / Math.max(1e-9, cfg.tailW);
-        const tail = cfg.tailA0 * Math.log1p(Math.exp(x)); // softplus
-        r += tail * (0.6 + 0.4*latCore); // 極側寄りにも少し
-      }
+      const x = (kp - Kc) / w;
+      // logistic in [0,1]
+      const s = 1.0 / (1.0 + Math.exp(-x));
+      return 1.0 + A0 * s * s;
+    }
 
-      // 下限
-      if (!isFinite(r) || r < 1.0) r = 1.0;
+    function rStorm(latDeg, tUtc, kp, cfg) {
+      const m = wrapMonth01(tUtc);
+      const Fm = seasonalFactor(m, cfg.sigmaM);
+      const Flat = latFactor(latDeg, cfg.sigmaLat);
+      const r0 = kpToRStormBase(kp);
+
+      // Mukhtarov “っぽく”：季節・緯度で嵐の効き方をスケール
+      // r = 1 + (r0-1)* (a + b*Fm*Flat)
+      const a = 0.35;
+      const b = 1.15;
+      let r = 1.0 + (r0 - 1.0) * (a + b * Fm * Flat);
+
+      // tail
+      r *= tailFactor(kp, cfg);
+      if (!isFinite(r) || r < 0.5) r = 1.0;
       return r;
     }
 
-    /* ============ Input TEC selection (BoM vs NOAA) ============ */
-    function getTecInputs() {
-      const src = document.getElementById("tecSourceSelect").value || "bom";
-
-      if (src === "noaa") {
-        if (!gNoaaDayFrames || !gNoaaDayTimes || gNoaaDayFrames.length !== 12) {
-          throw new Error("NOAAモード：前日12枚がメモリにありません。『NOAA 解析前日 12枚』ボタンで取得してください。");
-        }
-        // gridは12枚の共通
-        const base = gNoaaDayFrames[0];
-        gGrid = { latArr: base.latArr, lonArr: base.lonArr, nLat: base.nLat, nLon: base.nLon };
-        return { mode:"noaa12", frames:gNoaaDayFrames, times:gNoaaDayTimes, nPerDay:12, dtMinutes:120 };
+    /* ============================
+     *  フレア入力（Deep Flare Net 9領域）
+     * ============================ */
+    function getDeepFlareInputs() {
+      const regs = [];
+      for (let i=1;i<=9;i++) {
+        const Px = parseFloat(document.getElementById("fx"+i).value) || 0;
+        const Pm = parseFloat(document.getElementById("fm"+i).value) || 0;
+        const use = !!document.getElementById("fu"+i).checked;
+        regs.push({ Px, Pm, use });
       }
-
-      // BoM
-      const texts = [];
-      for (let k=1;k<=9;k++){
-        texts.push(document.getElementById("bomInput"+k).value || "");
-      }
-      const parsed = texts.map(t => parseBoM(t));
-      const base = parsed[0];
-      gGrid = { latArr: base.latArr, lonArr: base.lonArr, nLat: base.nLat, nLon: base.nLon };
-
-      const frames = parsed.map(p=>p.grid);
-      const times  = parsed.map(p=>p.validTime).filter(d=>d instanceof Date && !isNaN(d.getTime()));
-
-      // BoMは 9枠だけど時刻は 0000..2330（不等間隔）なので「時刻-of-day補間」で使う
-      return { mode:"bom9", parsed, frames, times };
+      // 使用領域の平均を採用（簡易）
+      const xs = regs.filter(r=>r.use).map(r=>r.Px);
+      const ms = regs.filter(r=>r.use).map(r=>r.Pm);
+      const Px = xs.length ? xs.reduce((a,b)=>a+b,0)/xs.length : 0;
+      const Pm = ms.length ? ms.reduce((a,b)=>a+b,0)/ms.length : 0;
+      return { Px, Pm };
     }
 
-    /* ============ Forecast start candidates ============ */
+    function flareMultiplier(Px, Pm, cfg) {
+      // 0..100% を 0..1 に
+      const px = clamp(Px, 0, 100) / 100;
+      const pm = clamp(Pm, 0, 100) / 100;
+      // 例：β で飽和
+      const beta = clamp(cfg.betaFlare, 0.0, 2.0);
+      const f = cfg.kX * px + cfg.kM * pm;
+      // multiplier >=1
+      return 1.0 + beta * f;
+    }
+
+    /* ============================
+     *  Base抽出＋加算モデル（あなたの要件式に沿う）
+     * ============================ */
+    function computeBaseFromInput(inputTec, kpBase, flareBase, cfg) {
+      // ここで「入力TEC から 嵐/フレア成分を引き算して BaseTEC を作る」役
+      // ただし “加算モデル”の要件上、Baseは非負にクリップ
+      // Baseは「静穏時の成分」に近いもの。ここは運用上の近似として以下を採用：
+      // BaseTEC = inputTec / ( kBase * rStorm_base(lat,t,kpBase) * flareMul_base(flareBase) )
+      // つまり「観測(入力)を、嵐倍率とフレア倍率で割って静穏へ戻す」設計。
+      const mFlBase = flareMultiplier(flareBase.Px, flareBase.Pm, cfg);
+      // rStorm_base は KpB を使う（緯度依存が入るので compute時にlat必要 → 呼び元でlat毎に計算）
+      return { mFlBase };
+    }
+
+    function computeDeltaStorm(baseTec, rStormNow, cfg) {
+      // ★要件：ΔStorm = kStorm * BaseTEC * (rStorm - 1)
+      return cfg.kStorm * baseTec * (rStormNow - 1.0);
+    }
+
+    /* ============================
+     *  予報用Kp系列作成：3日予報 + 日周リピート + 線形補間
+     * ============================ */
+    function buildForecastKpSeriesFrom3DayText(txt, startUtc, nSteps, dtMin) {
+      const days = parseNoaa3DayGeomag(txt);
+      if (!days.length) return [];
+
+      // 3日分しかない場合、4日目は3日目を流用
+      const dayMap = new Map(days.map(d => [d.dayKey, d.kp]));
+      // startUtc の日キーから 0..3日
+      const out = [];
+      for (let s=0;s<=nSteps;s++) {
+        const t = new Date(startUtc.getTime() + s*dtMin*60*1000);
+        const dk = toDayKeyUtc(new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate(), 0,0,0)));
+        let kp = dayMap.get(dk);
+        if (kp == null) {
+          // 最後の既知日を採用
+          kp = days[days.length-1].kp;
+        }
+        out.push({ t, kp });
+      }
+      return out;
+    }
+
+    /* ============================
+     *  入力TEC読み込み（BoM or NOAA）
+     * ============================ */
+    function readTecInputs() {
+      const src = document.getElementById("tecSourceSelect").value;
+      if (src === "noaa") {
+        // NOAA運用：gNoaaDayFrames(12)を必須とする
+        if (!gNoaaDayFrames || gNoaaDayFrames.length !== 12) {
+          throw new Error("NOAA入力が未取得です。「NOAA 解析前日 12枚」ボタンを押してください。");
+        }
+        // ベース格子は NOAA 2°×5°
+        return { source:"noaa", frames: gNoaaDayFrames, times: gNoaaDayTimes, gridMeta: gNoaaDayFrames[0] };
+      } else {
+        const ids = NOAA_INPUT_IDS;
+        const frames = [];
+        const times  = [];
+        for (let i=0;i<9;i++) {
+          const txt = document.getElementById(ids[i]).value;
+          if (!txt || !txt.trim()) continue;
+          const f = parseBoM(txt);
+          frames.push(f);
+          times.push(f.validTime);
+        }
+        if (!frames.length) throw new Error("BoM入力が空です。API取得 or コピペしてください。");
+        // BoMは9枚。予報は「UTC時刻-of-dayで日周リピート」を使う
+        // 基準格子を先頭で固定
+        return { source:"bom", frames, times, gridMeta: frames[0] };
+      }
+    }
+
+    /* ============================
+     *  予報開始候補（UI select）作成
+     * ============================ */
     function fillForecastStartCandidates() {
       const sel = document.getElementById("forecastStartSelect");
       if (!sel) return;
       sel.innerHTML = "";
 
-      const src = document.getElementById("tecSourceSelect")?.value || "bom";
-
-      let candidates = [];
-
       try {
-        if (src === "noaa" && gNoaaDayTimes?.length===12) {
-          candidates = gNoaaDayTimes.slice();
-        } else {
-          // BoM: 9テキストから validTime を拾う
-          const times = [];
-          for (let k=1;k<=9;k++){
-            const t = parseBomValidTime(document.getElementById("bomInput"+k).value||"");
-            if (t) times.push(t);
-          }
-          candidates = times.sort((a,b)=>a-b);
+        const input = readTecInputs();
+        const times = input.times.filter(t => t instanceof Date && !isNaN(t.getTime()));
+        times.sort((a,b)=>a-b);
+        const uniq = [];
+        for (const t of times) {
+          const k = t.toISOString();
+          if (!uniq.includes(k)) uniq.push(k);
         }
-      } catch {}
+        if (!uniq.length) throw new Error("候補時刻なし");
 
-      if (!candidates.length) {
+        for (const k of uniq) {
+          const t = new Date(k);
+          const opt = document.createElement("option");
+          opt.value = k;
+          opt.textContent = t.toISOString().replace(".000Z","Z");
+          sel.appendChild(opt);
+        }
+        // デフォルトは最初
+        sel.value = uniq[0];
+      } catch {
         const opt = document.createElement("option");
         opt.value = "";
-        opt.textContent = "（候補なし：入力を読み込んでください）";
+        opt.textContent = "(入力未読込)";
         sel.appendChild(opt);
-        return;
-      }
-
-      for (const t of candidates) {
-        const opt = document.createElement("option");
-        opt.value = t.toISOString();
-        opt.textContent = t.toISOString().replace(".000Z","Z");
-        sel.appendChild(opt);
+        sel.value = "";
       }
     }
 
-    /* ============ Main forecast ============ */
+    /* ============================
+     *  予報本体
+     * ============================ */
     function runForecast() {
       try {
-        const cfg = readConfigFromUi();
+        const cfg = getConfigFromUI();
 
-        // 1) read Kp forecast (NOAA 3-day text)
-        const kpTxt = document.getElementById("noaaKpText").value || "";
-        gKpSeries = parseNoaa3dayKpText(kpTxt);
+        // TEC入力
+        const input = readTecInputs();
 
-        // 2) base Kp / base flare (optional)
-        gBaseKpSeries = [];
-        gBaseFlareSeries = [];
-
-        // Base Kp JSON
-        const baseKpRaw = document.getElementById("baseKpJson").value || "";
-        if (baseKpRaw.trim()) {
-          try {
-            const arr = JSON.parse(baseKpRaw);
-            // NOAA planetary-k-index.json は 1行目がヘッダっぽいことがある
-            for (let i=0;i<arr.length;i++){
-              const row = arr[i];
-              if (i===0 && Array.isArray(row) && /time_tag/i.test(String(row[0]))) continue;
-              if (!Array.isArray(row) || row.length<2) continue;
-              const t = toUtcDateFromSwpcTimeTag(row[0]);
-              const kp = parseFloat(row[1]);
-              if (t && isFinite(kp)) gBaseKpSeries.push({ t, kp });
-            }
-            gBaseKpSeries.sort((a,b)=>a.t-b.t);
-          } catch {}
-        }
-        // fallback: use forecast Kp as base Kp too
-        if (!gBaseKpSeries.length && gKpSeries.length) gBaseKpSeries = gKpSeries.map(x=>({t:x.t, kp:x.kp}));
-
-        // Base flare JSON
-        const baseFlareRaw = document.getElementById("baseFlareJson").value || "";
-        if (baseFlareRaw.trim()) {
-          try {
-            const arr = JSON.parse(baseFlareRaw);
-            if (Array.isArray(arr)) {
-              for (const o of arr) {
-                const t = toUtcDateFromSwpcTimeTag(o.time || o.time_tag || o.t || "");
-                const Px = parseFloat(o.Px ?? o.px ?? 0);
-                const Pm = parseFloat(o.Pm ?? o.pm ?? 0);
-                if (t && (isFinite(Px) || isFinite(Pm))) {
-                  gBaseFlareSeries.push({ t, Px:isFinite(Px)?Px:0, Pm:isFinite(Pm)?Pm:0 });
-                }
-              }
-              gBaseFlareSeries.sort((a,b)=>a.t-b.t);
-            }
-          } catch {}
-        }
-
-        // TOD interpolators
-        gBaseKpTod = buildTodInterpolatorFromAbsolute(gBaseKpSeries, "kp");
-        gBaseFlareTod = buildTodFlareFromAbsolute(gBaseFlareSeries);
-
-        // 3) TEC inputs
-        const tecInput = getTecInputs();
-
-        // 4) forecast start
+        // 予報開始
         const sel = document.getElementById("forecastStartSelect");
-        let t0 = null;
-        if (sel && sel.value) t0 = new Date(sel.value);
-        if (!t0 || isNaN(t0.getTime())) {
-          // fallback: first available
-          if (tecInput.mode === "noaa12") t0 = tecInput.times[0];
-          else {
-            const times = tecInput.parsed.map(p=>p.validTime).filter(Boolean).sort((a,b)=>a-b);
-            t0 = times[0] || new Date();
+        let startUtc = null;
+        if (sel && sel.value) {
+          const d = new Date(sel.value);
+          if (!isNaN(d.getTime())) startUtc = d;
+        }
+        if (!startUtc) {
+          // 最も早いvalidTime
+          const times = input.times.filter(t=>t instanceof Date && !isNaN(t.getTime())).sort((a,b)=>a-b);
+          startUtc = times[0] || new Date();
+        }
+        gForecastStart = startUtc;
+
+        // 予報用Kp（3-day text）
+        const kpTxt = document.getElementById("noaaKpText").value || "";
+        gKpSeries = buildForecastKpSeriesFrom3DayText(kpTxt, startUtc, N_STEPS, DT_MINUTES);
+        if (!gKpSeries.length) {
+          // 最低限：全部3.0
+          gKpSeries = Array.from({length:N_STEPS+1}, (_,s)=>({ t:new Date(startUtc.getTime()+s*DT_MINUTES*60000), kp:3.0 }));
+        }
+
+        // Base用Kp/Flare：空なら予報Kp / flare=0
+        const baseKpRaw = document.getElementById("baseKpJson").value || "";
+        const baseKpParsed = parseNoaaPlanetaryKIndexJson(baseKpRaw);
+        gBaseKpSeries = baseKpParsed.length
+          ? baseKpParsed
+          : gKpSeries.map(x=>({ t:x.t, kp:x.kp }));
+
+        const baseFlRaw = document.getElementById("baseFlareJson").value || "";
+        gBaseFlareSeries = parseBaseFlareJson(baseFlRaw);
+        if (!gBaseFlareSeries.length) {
+          // flare無し
+          gBaseFlareSeries = [{ t: startUtc, Px:0, Pm:0 }];
+        }
+
+        // TOD化：BaseKp/Flare（日周リピート + 線形補間）
+        gBaseKpTod = buildTodSeriesFromTimeSeries(gBaseKpSeries, "kp", 30);
+        gBaseFlareTod = buildTodSeriesFromTimeSeries(
+          gBaseFlareSeries.map(x=>({ t:x.t, Px:x.Px, Pm:x.Pm })), "Px", 30
+        );
+        // Pmは別で
+        const baseFlarePmTod = buildTodSeriesFromTimeSeries(
+          gBaseFlareSeries.map(x=>({ t:x.t, Pm:x.Pm })), "Pm", 30
+        );
+        // 合体用に保持
+        gBaseFlareTod._pm = baseFlarePmTod;
+
+        // NOAA TEC TOD（12枚→30分補間）
+        let tecTod = null;
+        if (input.source === "noaa") {
+          tecTod = buildNoaaTecTodFrom12Frames(input.frames, input.times, 30);
+        }
+
+        // 予報フレーム生成
+        const gridMeta = input.gridMeta;
+        gGrid = { latArr:gridMeta.latArr, lonArr:gridMeta.lonArr, nLat:gridMeta.nLat, nLon:gridMeta.nLon };
+        gForecastFrames = [];
+        gForecastTimes  = [];
+
+        // Deep Flare Net（予報用）：時刻依存無しの簡易（将来はAR位置等で時刻依存させてもOK）
+        const flarePred = getDeepFlareInputs();
+
+        const dbgMix = !!document.getElementById("dbgNoaaMix").checked;
+        let mixInfo = "";
+
+        for (let s=0;s<=N_STEPS;s++) {
+          const t = new Date(startUtc.getTime() + s*DT_MINUTES*60*1000);
+          gForecastTimes.push(t);
+
+          // 入力TEC：日周リピート（UTC時刻-of-dayで選ぶ）
+          let inputFrame = null;
+          if (input.source === "noaa") {
+            inputFrame = noaaTecTodFrameAt(tecTod, t);
+          } else {
+            // BoM 9枚：最近傍（時刻-of-day）
+            inputFrame = pickBomFrameByUtcTod(input.frames, input.times, t);
           }
-        }
-        gForecastStart = t0;
 
-        // 5) build forecast time array
-        gForecastTimes = [];
-        for (let s=0;s<=N_STEPS;s++){
-          gForecastTimes.push(new Date(t0.getTime() + s*DT_MINUTES*60*1000));
-        }
+          // KpF（予報）
+          const kpF = (gKpSeries[s] && isFinite(gKpSeries[s].kp)) ? gKpSeries[s].kp : 3.0;
 
-        // 6) forecast frames
-        const nLat = gGrid.nLat, nLon = gGrid.nLon;
+          // KpB（Base）
+          const kpB = todValueAt(gBaseKpTod, t);
+          const flareB = {
+            Px: todValueAt(gBaseFlareTod, t) ?? 0,
+            Pm: todValueAt(gBaseFlareTod._pm, t) ?? 0
+          };
 
-        gForecastFrames = new Array(N_STEPS+1);
-        for (let s=0;s<=N_STEPS;s++) {
-          gForecastFrames[s] = Array.from({length:nLat}, ()=>Array.from({length:nLon}, ()=>0));
-        }
+          // 予報フレア倍率（DeepFlare）
+          const mFlPred = flareMultiplier(flarePred.Px, flarePred.Pm, cfg);
 
-        const flareF = getForecastFlareStrength01(); // forecast flare (Deep Flare Net)
-        const dbgMix = !!document.getElementById("dbgNoaaMix")?.checked;
+          // Base抽出は「入力を嵐倍率&フレア倍率で割る」
+          // rStorm_base は緯度で変わるので格子ごとに計算
+          const outGrid = Array.from({length:gGrid.nLat}, ()=>Array.from({length:gGrid.nLon}, ()=>0));
 
-        // 7) step loop
-        for (let s=0;s<=N_STEPS;s++) {
-          const t = gForecastTimes[s];
-          const month = monthFromDateUTC(t);
+          const baseHelper = computeBaseFromInput(0, kpB, flareB, cfg); // mFlBase を得る
+          const mFlBase = baseHelper.mFlBase;
 
-          const kpF = getKpForecastAt(t);
-          const kpB = getKpBaseAt(t);
-          const baseFl = getBaseFlareAt(t);
-
-          // 7a) get input TEC at time-of-day (NOAA12: 2h grid with linear interp; BoM9: time-key interp)
-          const tecInGrid = (tecInput.mode === "noaa12")
-            ? sampleNoaa12ByTod(tecInput, t, dbgMix && s===0)
-            : sampleBom9ByTod(tecInput, t);
-
-          for (let i=0;i<nLat;i++){
+          for (let i=0;i<gGrid.nLat;i++) {
             const lat = gGrid.latArr[i];
-            for (let j=0;j<nLon;j++){
-              const tecIn = tecInGrid[i][j];
+            const rB = rStorm(lat, t, kpB, cfg);
+            const rF = rStorm(lat, t, kpF, cfg);
 
-                            // 7b) Base extraction (remove storm+flare components estimated from BaseKp/BaseFlare)
-              // BaseTEC = kBase * TEC_in / rStorm_base / (1 + flareBaseTerm)
-              const rBase = calc_rStorm(lat, month, isFinite(kpB)?kpB:3.0, cfg);
+            for (let j=0;j<gGrid.nLon;j++) {
+              const tecIn = inputFrame.grid[i][j];
+              const tecInSafe = isFinite(tecIn) ? tecIn : 0;
 
-              const flareBaseTerm =
-                cfg.betaFlare * (
-                  cfg.kX * (isFinite(baseFl.Px)?baseFl.Px:0) +
-                  cfg.kM * (isFinite(baseFl.Pm)?baseFl.Pm:0)
-                ) / 100.0;
+              // BaseTEC（静穏推定）
+              let baseTec = tecInSafe / Math.max(1e-6, (cfg.kBase * rB * mFlBase));
+              if (!isFinite(baseTec) || baseTec < 0) baseTec = 0;
 
-              let baseTec = (isFinite(tecIn) ? tecIn : NaN);
-              if (!isFinite(baseTec)) { gForecastFrames[s][i][j] = NaN; continue; }
+              // ΔStorm（要件式）
+              const dStorm = computeDeltaStorm(baseTec, rF, cfg);
 
-              baseTec = cfg.kBase * baseTec / Math.max(1e-9, rBase) / Math.max(1e-9, (1.0 + flareBaseTerm));
-              if (!isFinite(baseTec)) baseTec = NaN;
+              // ΔFlare：Baseに対して flarePred を掛けた増分（ここはあなたの体系に合わせて）
+              // 予報フレア倍率が1なら0増分。Base TEC に対して乗算増分。
+              const dFlare = baseTec * (mFlPred - 1.0);
 
-              // 7c) Storm add (ΔStorm = kStorm * BaseTEC * (rStorm_forecast - 1))
-              const rF = calc_rStorm(lat, month, isFinite(kpF)?kpF:3.0, cfg);
-              const dStorm = cfg.kStorm * baseTec * Math.max(0, (rF - 1.0));
+              // Forecast = Base + ΔStorm + ΔFlare
+              let tecOut = baseTec + dStorm + dFlare;
+              if (!isFinite(tecOut) || tecOut < 0) tecOut = 0;
 
-              // 7d) Flare add (Deep Flare Net → multiplier term on BaseTEC)
-              // flareForecastTerm = betaFlare * (kX*X01 + kM*M01)
-              const flareForecastTerm = cfg.betaFlare * (cfg.kX * flareF.X01 + cfg.kM * flareF.M01);
-
-              let tecOut = baseTec + dStorm + baseTec * flareForecastTerm;
-              if (tecOut < 0) tecOut = 0;
-
-              gForecastFrames[s][i][j] = tecOut;
+              outGrid[i][j] = tecOut;
             }
           }
+
+          gForecastFrames.push(outGrid);
+
+          if (dbgMix && input.source === "noaa" && s===0) {
+            mixInfo = `NOAA_TOD(day=${tecTod?.dayKey || "?"}, step=${tecTod?.stepMinutes || "?"}min) / BaseKpTOD(day=${gBaseKpTod?.dayKey || "?"})`;
+          }
         }
-
-        // UI: formula text
-        document.getElementById("formulaText").textContent =
-`[Inputs]
-TEC_in(t,lat,lon) : BoM(9) or NOAA(12; prev day, 2h) sampled by UTC time-of-day
-KpF(t) : NOAA 3-day forecast (text) → linear interp
-KpB(t) : Base Kp (NOAA K-index JSON) → time-of-day repeat + linear interp
-FlareB(t): Base flare (latest M/X) → time-of-day repeat + linear interp
-FlareF : Deep Flare Net (9 regions) → X01/M01 (0..1)
-
-[SStorm multiplier]
-rStorm(lat, month, Kp) = 1 + coreAmp(Kp)*latEnvelope(lat)*seasonEnvelope(month) + tail(Kp)
-coreAmp(Kp) = 0.06*(max(0,Kp-3))^2
-tail(Kp) = A0*softplus((Kp-Kc)/w)
-
-[Base extraction + add model]
-flareBaseTerm(t) = β_flare*(kX*PxB(t) + kM*PmB(t))/100
-BaseTEC(t) = kBase * TEC_in(t) / rStorm(lat,month,KpB(t)) / (1 + flareBaseTerm(t))
-
-ΔStorm(t) = kStorm * BaseTEC(t) * ( rStorm(lat,month,KpF(t)) - 1 )
-
-flareForecastTerm = β_flare*(kX*X01 + kM*M01)
-TEC_out(t) = BaseTEC(t) + ΔStorm(t) + BaseTEC(t)*flareForecastTerm`;
 
         currentStepIndex = 0;
-        document.getElementById("timeSlider").value = 0;
-        onSliderChange();
+        document.getElementById("timeSlider").value = "0";
+        document.getElementById("timeLabel").textContent = `t = 0.0 h`;
+        document.getElementById("utcLabel").textContent  = `UTC: ${startUtc.toISOString().replace(".000Z","Z")}`;
 
-        logInfo(`計算OK: start=${t0.toISOString().replace(".000Z","Z")} / steps=${N_STEPS} / grid=${gGrid.nLat}x${gGrid.nLon} / src=${tecInput.mode}`);
-      } catch (e) {
+        setOverlayTime(startUtc);
+        updateFormulaText();
+        initMapIfNeeded();
+        updateLegend();
+        requestDraw();
+
+        logInfo(`予報計算OK（${N_STEPS}ステップ, 4日×30分）。Start=${startUtc.toISOString().replace(".000Z","Z")} / ${mixInfo}`);
+        updateKpLabels();
+      } catch(e) {
         console.error(e);
-        logInfo("失敗: " + e.message);
+        logInfo("予報計算失敗: " + e.message);
       }
     }
 
-    /* ============ Input sampling by UTC time-of-day ============ */
-
-    // NOAA 12 frames (2h) → 30min: linear interp by UTC time-of-day (repeat daily)
-    function sampleNoaa12ByTod(tecInput, tUtc, dbgOnce=false) {
-      const frames = tecInput.frames;    // [{grid,...}] length=12
-      const times  = tecInput.times;     // Date[12] targets (00,02,...,22 of prevday)
-      const nLat = gGrid.nLat, nLon = gGrid.nLon;
-
-      // minutes 0..1440
-      const m = minutesOfDayUTC(tUtc);
-      const stepMin = tecInput.dtMinutes || 120; // 120
-      const nPerDay = tecInput.nPerDay || 12;
-
-      // index in [0..11] and fraction
-      // anchor at 00:00
-      let fIdx = m / stepMin;
-      if (fIdx < 0) fIdx = 0;
-      // cyclic for 24h
-      while (fIdx >= nPerDay) fIdx -= nPerDay;
-
-      const i0 = Math.floor(fIdx);
-      const i1 = (i0 + 1) % nPerDay;
-      const u  = fIdx - i0;
-
-      const g0 = frames[i0].grid;
-      const g1 = frames[i1].grid;
-
-      const out = Array.from({length:nLat}, ()=>Array.from({length:nLon}, ()=>0));
-
-      for (let i=0;i<nLat;i++){
-        for (let j=0;j<nLon;j++){
-          const v0 = g0[i][j], v1 = g1[i][j];
-          out[i][j] = (isFinite(v0) && isFinite(v1)) ? (v0 + (v1-v0)*u) : (isFinite(v0)?v0:(isFinite(v1)?v1:NaN));
-        }
+    function pickBomFrameByUtcTod(frames, times, tUtc) {
+      // times[i] の UTC HH:MM に対して最近傍
+      const mins = tUtc.getUTCHours()*60 + tUtc.getUTCMinutes();
+      let best = frames[0], bestD = 1e99;
+      for (let i=0;i<frames.length;i++) {
+        const ti = times[i];
+        if (!(ti instanceof Date) || isNaN(ti.getTime())) continue;
+        const mi = ti.getUTCHours()*60 + ti.getUTCMinutes();
+        let d = Math.abs(mi - mins);
+        d = Math.min(d, 1440 - d);
+        if (d < bestD) { bestD = d; best = frames[i]; }
       }
-
-      if (dbgOnce) {
-        try {
-          const t0 = times[i0]?.toISOString()?.replace(".000Z","Z") || "--";
-          const t1 = times[i1]?.toISOString()?.replace(".000Z","Z") || "--";
-          logInfo(`NOAA TOD mix: m=${m.toFixed(1)} min → i0=${i0} (${t0}), i1=${i1} (${t1}), u=${u.toFixed(3)}`);
-        } catch {}
-      }
-      return out;
+      return best;
     }
 
-    // BoM 9 frames: use their VALID times (usually 00:00..23:30) to build TOD linear interpolation
-    function sampleBom9ByTod(tecInput, tUtc) {
-      const parsed = tecInput.parsed; // each has {grid, validTime}
-      const nLat = gGrid.nLat, nLon = gGrid.nLon;
-
-      // build mins/frames arrays
-      const items = [];
-      for (const p of parsed) {
-        if (!(p.validTime instanceof Date) || isNaN(p.validTime.getTime())) continue;
-        items.push({ m: minutesOfDayUTC(p.validTime), grid: p.grid });
-      }
-      items.sort((a,b)=>a.m-b.m);
-      if (items.length < 2) throw new Error("BoM入力の時刻が不足（VALID DATE/TIMEが読めない）");
-
-      // wrap end
-      items.push({ m: items[0].m + 1440, grid: items[0].grid });
-
-      const mm0 = minutesOfDayUTC(tUtc);
-      let mm = mm0;
-      while (mm < items[0].m) mm += 1440;
-      while (mm > items[items.length-1].m) mm -= 1440;
-
-      let k1=0;
-      while (k1 < items.length && items[k1].m <= mm) k1++;
-      if (k1 === 0) k1 = 1;
-      if (k1 >= items.length) k1 = items.length-1;
-
-      const a = items[k1-1], b = items[k1];
-      const u = (mm - a.m) / Math.max(1e-9, (b.m - a.m));
-
-      const out = Array.from({length:nLat}, ()=>Array.from({length:nLon}, ()=>0));
-      for (let i=0;i<nLat;i++){
-        for (let j=0;j<nLon;j++){
-          const v0 = a.grid[i][j], v1 = b.grid[i][j];
-          out[i][j] = (isFinite(v0) && isFinite(v1)) ? (v0 + (v1-v0)*u) : (isFinite(v0)?v0:(isFinite(v1)?v1:NaN));
-        }
-      }
-      return out;
-    }
-
-    /* ============ Export CSV (4 days, 30min) ============ */
-    function exportTecCsv4day() {
-      try {
-        if (!gForecastFrames?.length || !gForecastTimes?.length || !gGrid) throw new Error("先に『TEC予報を計算』してください。");
-
-        const cfg = readConfigFromUi();
-        const mode = document.getElementById("mapModeSelect")?.value || "tec";
-
-        // CSV: time,lat,lon,value
-        const lines = ["time_utc,lat,lon,value"];
-        for (let s=0;s<=N_STEPS;s++){
-          const t = gForecastTimes[s].toISOString().replace(".000Z","Z");
-          const frame = gForecastFrames[s];
-          for (let i=0;i<gGrid.nLat;i++){
-            for (let j=0;j<gGrid.nLon;j++){
-              let v = frame[i][j];
-              if (mode === "gps") v = isFinite(v) ? (v * cfg.kL1) : NaN;
-              if (!isFinite(v)) continue;
-              lines.push(`${t},${gGrid.latArr[i].toFixed(2)},${gGrid.lonArr[j].toFixed(2)},${v.toFixed(3)}`);
-            }
-          }
-        }
-
-        const blob = new Blob([lines.join("\n")], {type:"text/csv"});
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `swifttec_v3_${mode}_${gForecastStart?.toISOString()?.slice(0,16)?.replace(":","") || "start"}Z.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
-        logInfo("CSVを出力しました。");
-      } catch (e) {
-        console.error(e);
-        logInfo("CSV出力失敗: " + e.message);
-      }
-    }
-
-    /* ============ Reset ============ */
-    function resetAll() {
-      gForecastFrames = [];
-      gForecastTimes = [];
-      gForecastStart = null;
-      currentStepIndex = 0;
-      document.getElementById("timeSlider").value = 0;
-      document.getElementById("timeLabel").textContent = "t = 0.0 h";
-      document.getElementById("utcLabel").textContent = "UTC: --";
-      document.getElementById("kpNowLabel").textContent = "KpF=-- / KpB=--";
-      setOverlayTime(null);
-      document.getElementById("pointInfo").textContent = "地図上をクリックすると、その格子点のTEC・GPS L1誤差と位置が表示されます。";
+    /* ============================
+     *  スライダー/表示更新
+     * ============================ */
+    function onSliderChange() {
+      const slider = document.getElementById("timeSlider");
+      const v = parseInt(slider.value, 10) || 0;
+      currentStepIndex = clamp(v, 0, N_STEPS);
+      const t = gForecastTimes[currentStepIndex] || gForecastStart;
+      const hours = (currentStepIndex * DT_MINUTES)/60;
+      document.getElementById("timeLabel").textContent = `t = ${hours.toFixed(1)} h`;
+      document.getElementById("utcLabel").textContent  = `UTC: ${(t ? t.toISOString().replace(".000Z","Z") : "--")}`;
+      setOverlayTime(t);
+      updateKpLabels();
       requestDraw();
-      logInfo("リセットしました。");
     }
 
-    /* ============ Legend gradient (limit-aware) ============ */
-    // ★グラデーションを「limit比率」で作る（見た目が正しくなる）
-    function updateLegend() {
-      const bar = document.getElementById("legendBar");
-      const minEl = document.getElementById("legendMin");
-      const maxEl = document.getElementById("legendMax");
-      const unitEl = document.getElementById("legendUnit");
-      if (!bar || !minEl || !maxEl || !unitEl) return;
-
-      const scale = (mapMode === "gps") ? gGpsColorScale : gTecColorScale;
-      const unit = (mapMode === "gps") ? "m" : "TECU";
-      unitEl.textContent = unit;
-
-      const max = scale[scale.length-1].limit;
-      const stops = [];
-
-      // 0 を最初色で固定
-      stops.push(`${scale[0].color} 0%`);
-      for (let i=0;i<scale.length;i++){
-        const p = clamp((scale[i].limit / Math.max(1e-9, max))*100, 0, 100);
-        stops.push(`${scale[i].color} ${p.toFixed(2)}%`);
-      }
-      bar.style.background = `linear-gradient(to top, ${stops.join(",")})`;
-
-      minEl.textContent = "0";
-      maxEl.textContent = String(max);
+    function onTecAlphaChange() {
+      const v = parseFloat(document.getElementById("tecAlpha").value);
+      tecAlpha = clamp(v, 0.2, 1.0);
+      requestDraw();
     }
 
-    /* ============ Init ============ */
     function changeMapMode() {
-      mapMode = document.getElementById("mapModeSelect").value;
+      mapMode = document.getElementById("mapModeSelect").value || "tec";
       updateLegend();
       requestDraw();
     }
 
-    window.addEventListener("DOMContentLoaded", () => {
+    function updateKpLabels() {
+      const t = gForecastTimes[currentStepIndex];
+      if (!t) return;
+      const kpF = (gKpSeries[currentStepIndex] && isFinite(gKpSeries[currentStepIndex].kp)) ? gKpSeries[currentStepIndex].kp : null;
+      const kpB = todValueAt(gBaseKpTod, t);
+      const el = document.getElementById("kpNowLabel");
+      if (el) el.textContent = `KpF=${kpF!=null?kpF.toFixed(2):"--"} / KpB=${kpB!=null?kpB.toFixed(2):"--"}`;
+    }
+
+    /* ============================
+     *  地図初期化 & 描画
+     * ============================ */
+    function initMapIfNeeded() {
+      if (map) return;
+
+      map = L.map("tecMap", {
+        worldCopyJump: true,
+        preferCanvas: true
+      }).setView([15, 130], 3);
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 8,
+        attribution: "&copy; OpenStreetMap contributors"
+      }).addTo(map);
+
+      // canvas overlay
+      const container = document.getElementById("tecMap");
+      tecCanvas = document.createElement("canvas");
+      tecCanvas.className = "tec-canvas-overlay";
+      container.appendChild(tecCanvas);
+      tecCtx = tecCanvas.getContext("2d");
+
+      function resizeCanvas() {
+        const r = container.getBoundingClientRect();
+        tecCanvas.width = Math.floor(r.width);
+        tecCanvas.height = Math.floor(r.height);
+        requestDraw();
+      }
+      window.addEventListener("resize", resizeCanvas);
+      map.on("move zoom resize", ()=>requestDraw());
+      resizeCanvas();
+
+      // click to show grid point
+      map.on("click", (ev) => {
+        try {
+          const lat = ev.latlng.lat;
+          const lon = ev.latlng.lng;
+          const info = sampleAtLatLon(lat, lon);
+          const pre = document.getElementById("pointInfo");
+          if (pre) pre.textContent = info;
+        } catch(e) {
+          console.error(e);
+        }
+      });
+
+      updateLegend();
+    }
+
+    function sampleAtLatLon(lat, lon) {
+      if (!gGrid || !gForecastFrames.length) return "未計算です。";
+      // 最寄り格子
+      let bestI=0, bestJ=0, bestD=1e99;
+      for (let i=0;i<gGrid.nLat;i++) {
+        const dLat = Math.abs(gGrid.latArr[i]-lat);
+        if (dLat > bestD) continue;
+        for (let j=0;j<gGrid.nLon;j++) {
+          let dLon = Math.abs(gGrid.lonArr[j]-lon);
+          dLon = Math.min(dLon, 360-dLon);
+          const d = dLat + dLon*0.4;
+          if (d < bestD) { bestD=d; bestI=i; bestJ=j; }
+        }
+      }
+      const tec = gForecastFrames[currentStepIndex]?.[bestI]?.[bestJ];
+      const cfg = getConfigFromUI();
+      const gps = (isFinite(tec) ? tec : 0) * cfg.kL1;
+      const t = gForecastTimes[currentStepIndex];
+      return [
+        `Clicked: lat=${lat.toFixed(3)}, lon=${lon.toFixed(3)}`,
+        `Nearest Grid: lat=${gGrid.latArr[bestI].toFixed(2)}, lon=${gGrid.lonArr[bestJ].toFixed(2)}`,
+        `Time: ${(t?t.toISOString().replace(".000Z","Z"):"--")}`,
+        `TEC: ${(isFinite(tec)?tec.toFixed(2):"NaN")} TECU`,
+        `GPS L1 error: ${gps.toFixed(2)} m`
+      ].join("\n");
+    }
+
+    function hexToRgb(hex) {
+      const h = String(hex || "").replace("#","");
+      if (h.length !== 6) return [255,255,255];
+      const r = parseInt(h.slice(0,2),16);
+      const g = parseInt(h.slice(2,4),16);
+      const b = parseInt(h.slice(4,6),16);
+      return [r,g,b];
+    }
+
+    function lerp(a,b,t){ return a + (b-a)*t; }
+    function lerpColor(c0, c1, t) {
+      const a = hexToRgb(c0), b = hexToRgb(c1);
+      const r = Math.round(lerp(a[0],b[0],t));
+      const g = Math.round(lerp(a[1],b[1],t));
+      const bb= Math.round(lerp(a[2],b[2],t));
+      return `rgb(${r},${g},${bb})`;
+    }
+
+    function valueToColor(v, scale) {
+      if (!isFinite(v)) return "rgba(0,0,0,0)";
+      const s = scale.slice().sort((a,b)=>a.limit-b.limit);
+      if (v <= s[0].limit) return s[0].color;
+      for (let i=1;i<s.length;i++) {
+        if (v <= s[i].limit) {
+          const v0 = s[i-1].limit, v1 = s[i].limit;
+          const t = (v - v0) / Math.max(1e-6, (v1 - v0));
+          return lerpColor(s[i-1].color, s[i].color, clamp(t,0,1));
+        }
+      }
+      return s[s.length-1].color;
+    }
+
+    function drawTecOverlay() {
+      if (!map || !tecCanvas || !tecCtx) return;
+      if (!gGrid || !gForecastFrames.length) return;
+
+      const w = tecCanvas.width, h = tecCanvas.height;
+      tecCtx.clearRect(0,0,w,h);
+
+      const frame = gForecastFrames[currentStepIndex];
+      if (!frame) return;
+
+      const cfg = getConfigFromUI();
+      const scale = (mapMode === "gps") ? gGpsColorScale : gTecColorScale;
+
+      // 簡易：格子点を矩形で塗る（2°×5°でも十分）
+      // 緯度経度の四隅をピクセルに変換し、矩形塗り
+      for (let i=0;i<gGrid.nLat-1;i++) {
+        for (let j=0;j<gGrid.nLon-1;j++) {
+          const lat0 = gGrid.latArr[i];
+          const lon0 = gGrid.lonArr[j];
+          const lat1 = gGrid.latArr[i+1];
+          const lon1 = gGrid.lonArr[j+1];
+
+          const p0 = map.latLngToContainerPoint([lat0, lon0]);
+          const p1 = map.latLngToContainerPoint([lat1, lon1]);
+
+          const x = Math.min(p0.x, p1.x);
+          const y = Math.min(p0.y, p1.y);
+          const rw = Math.abs(p1.x - p0.x);
+          const rh = Math.abs(p1.y - p0.y);
+
+          let val = frame[i][j];
+          if (!isFinite(val)) val = 0;
+
+          if (mapMode === "gps") val = val * cfg.kL1;
+
+          const col = valueToColor(val, scale);
+          tecCtx.globalAlpha = tecAlpha;
+          tecCtx.fillStyle = col;
+          tecCtx.fillRect(x, y, rw+1, rh+1);
+        }
+      }
+      tecCtx.globalAlpha = 1.0;
+    }
+
+    function updateLegend() {
+      if (!map) return;
+
+      if (tecLegendControl) {
+        tecLegendControl.remove();
+        tecLegendControl = null;
+      }
+
+      const scale = (mapMode === "gps") ? gGpsColorScale : gTecColorScale;
+      const title = (mapMode === "gps") ? "GPS L1 [m]" : "TEC [TECU]";
+
+      tecLegendControl = L.control({ position: "bottomright" });
+      tecLegendControl.onAdd = function() {
+        const div = L.DomUtil.create("div", "leaflet-control tec-legend");
+        div.innerHTML = `
+          <div class="tec-legend-title">${title}</div>
+          <canvas id="legendBar" width="18" height="130" style="display:block;margin:0 auto 4px auto;border-radius:4px;border:1px solid #444;"></canvas>
+          <div class="tec-legend-labels"><span>${scale[0].limit}</span><span>${scale[scale.length-1].limit}</span></div>
+        `;
+        return div;
+      };
+      tecLegendControl.addTo(map);
+
+      setTimeout(() => {
+        const c = document.getElementById("legendBar");
+        if (!c) return;
+        const ctx = c.getContext("2d");
+        const h = c.height;
+        for (let y=0;y<h;y++) {
+          const t = 1 - y/(h-1);
+          // 0..1 を scale にマップ
+          const vMin = scale[0].limit;
+          const vMax = scale[scale.length-1].limit;
+          const v = vMin + (vMax - vMin)*t;
+          ctx.fillStyle = valueToColor(v, scale);
+          ctx.fillRect(0, y, c.width, 1);
+        }
+      }, 0);
+    }
+
+    /* ============================
+     *  フォーミュラ表示
+     * ============================ */
+    function updateFormulaText() {
+      const cfg = getConfigFromUI();
+      const txt = `
+【モデル概要（毎ステップ Base抽出＋加算）】
+
+入力TEC（BoM/NOAAの解析前日）を、Base用Kp/フレアで「静穏へ戻す」：
+  BaseTEC = InputTEC / ( kBase * rStorm(lat,t,KpB) * mFlare(BaseFlare) )
+
+嵐成分（要件式）：
+  ΔStorm = kStorm * BaseTEC * ( rStorm(lat,t,KpF) - 1 )
+
+フレア成分（DeepFlareNet 9領域の平均確率から倍率）：
+  mFlarePred = 1 + β_flare*(k_X*Px + k_M*Pm)   [Px,Pmは0..1]
+  ΔFlare = BaseTEC * ( mFlarePred - 1 )
+
+最終TEC：
+  TEC_forecast = BaseTEC + ΔStorm + ΔFlare
+
+SStorm倍率（rStorm）は Mukhtarov風（季節×緯度×Kp）＋tail：
+  rStorm = 1 + (r0(Kp)-1) * (a + b*Season(month,σm)*Lat(lat,σlat))  そして tail(Kp;Kc,w,A0) を乗算
+  r0(Kp) = 1 + 0.02*Kp^2 + 0.01*Kp
+  tail = 1 + A0 * logistic((Kp-Kc)/w)^2   （useTail=${cfg.useTail}）
+
+現在の係数：
+  kBase=${cfg.kBase}, kStorm=${cfg.kStorm}, β=${cfg.betaFlare}, kX=${cfg.kX}, kM=${cfg.kM}, kL1=${cfg.kL1}
+  σ_lat=${cfg.sigmaLat}, σ_m=${cfg.sigmaM}, tail(Kc=${cfg.tailKc}, w=${cfg.tailW}, A0=${cfg.tailA0})
+`.trim();
+
+      document.getElementById("formulaText").textContent = txt;
+    }
+
+    /* ============================
+     *  地域フォーカス
+     * ============================ */
+    function focusRegion(name) {
+      if (!map) initMapIfNeeded();
+      const regions = {
+        japan:        { center:[36, 138], zoom:4 },
+        northAmerica: { center:[40, -100], zoom:3 },
+        southAmerica: { center:[-15, -60], zoom:3 },
+        europe:       { center:[52, 10], zoom:4 },
+        africa:       { center:[5, 20], zoom:3 },
+        australia:    { center:[-25, 135], zoom:4 }
+      };
+      const r = regions[name];
+      if (!r) return;
+      map.setView(r.center, r.zoom);
+    }
+
+    function applyManualFocus() {
+      if (!map) initMapIfNeeded();
+      const latMin = parseFloat(document.getElementById("focusLatMin").value);
+      const latMax = parseFloat(document.getElementById("focusLatMax").value);
+      const lonMin = parseFloat(document.getElementById("focusLonMin").value);
+      const lonMax = parseFloat(document.getElementById("focusLonMax").value);
+
+      const b = L.latLngBounds([latMin, lonMin], [latMax, lonMax]);
+      map.fitBounds(b, { padding:[10,10] });
+    }
+
+    function resetFocus() {
+      if (!map) initMapIfNeeded();
+      map.setView([15, 130], 3);
+    }
+
+    /* ============================
+     *  CSV出力（4日分）
+     * ============================ */
+    function exportTecCsv4day() {
+      if (!gGrid || !gForecastFrames.length || !gForecastTimes.length) {
+        logInfo("CSV出力：先に予報計算してください。");
+        return;
+      }
+      // 行：time, lat, lon, tec, gps
+      const cfg = getConfigFromUI();
+      const rows = [];
+      rows.push(["time_utc","lat","lon","tec_tecu","gpsL1_m"].join(","));
+      for (let s=0;s<gForecastTimes.length;s++) {
+        const t = gForecastTimes[s].toISOString().replace(".000Z","Z");
+        const frame = gForecastFrames[s];
+        for (let i=0;i<gGrid.nLat;i++) {
+          const lat = gGrid.latArr[i];
+          for (let j=0;j<gGrid.nLon;j++) {
+            const lon = gGrid.lonArr[j];
+            const tec = frame[i][j];
+            const gps = (isFinite(tec)?tec:0) * cfg.kL1;
+            rows.push([t, lat, lon, (isFinite(tec)?tec.toFixed(2):""), gps.toFixed(2)].join(","));
+          }
+        }
+      }
+      const csv = rows.join("\n");
+      const blob = new Blob([csv], { type:"text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const dayKey = gForecastStart ? toDayKeyUtc(gForecastStart) : "forecast";
+      a.download = `swifttec_forecast_${dayKey}_4day_30min.csv`;
+      a.click();
+      setTimeout(()=>URL.revokeObjectURL(url), 1000);
+      logInfo("CSVを出力しました。");
+    }
+
+    /* ============================
+     *  リセット
+     * ============================ */
+    function resetAll() {
+      gGrid = null;
+      gForecastFrames = [];
+      gForecastTimes  = [];
+      gForecastStart  = null;
+      currentStepIndex = 0;
+      document.getElementById("timeSlider").value = "0";
+      document.getElementById("timeLabel").textContent = "t = 0.0 h";
+      document.getElementById("utcLabel").textContent  = "UTC: --";
+      document.getElementById("kpNowLabel").textContent = "KpF=-- / KpB=--";
+      setOverlayTime(null);
+      requestDraw();
+      logInfo("リセットしました（保存データは削除していません）。");
+    }
+
+    /* ============================
+     *  起動時初期化
+     * ============================ */
+    function boot() {
       loadConfig(false);
       loadColorScales();
       loadBomInputsFromStorage();
-
-      initMap();
+      updateFormulaText();
       fillForecastStartCandidates();
-
-      // 初期凡例
+      initMapIfNeeded();
       updateLegend();
+      requestDraw();
 
-      // 既存値でラベル同期
-      onSliderChange();
-    });
+      // 起動直後は Kp などは未計算なので軽く表示
+      logInfo("起動しました。BoM/NOAA入力 → Kpテキスト → 実行 を押してください。");
+    }
+
+    document.addEventListener("DOMContentLoaded", boot);
   </script>
 </body>
 </html>
+
