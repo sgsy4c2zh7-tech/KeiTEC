@@ -225,7 +225,7 @@
           ・NOAA入力は <b>解析前日(UTC)の1日分</b> をAPI取得（<b>2時間おき12枚</b>）→ 2°×5°格子化<br>
           ・4日予報では NOAA12枚を <b>UTC時刻-of-dayで日周リピート</b>（模様が時間で動く）<br>
           ・今回の修正：<b>2時間→30分は線形補間</b>、BaseKp/Flareも<b>日周リピート＋線形補間</b><br>
-          ・今回の修正：<b>NOAA 3-day Kp テキストのパースを堅牢化（年=2026が 2,0,2,6 になる問題を回避）</b><br>
+          ・今回の修正：<b>NOAA 3-day Forecast の Kp index breakdown を直接パース</b><br>
         </div>
       </div>
 
@@ -329,10 +329,11 @@
       <div class="card">
         <div class="card-header">
           <h2>2. NOAA Kp テキスト（予報用）</h2>
-          <span>3-Day Geomag Forecast</span>
+          <span>3-Day Forecast</span>
         </div>
         <div class="small">
-          ・Kp（3日予報）は、NOAAの <b>3-day geomag forecast (text)</b> を自動取得できます。
+          ・Kp（3日予報）は、NOAAの <b>3-day forecast text</b> を自動取得できます。<br>
+          ・<b>NOAA Kp index breakdown</b> の 3時間ごとの表をそのまま使用します。
         </div>
         <div class="row">
           <button onclick="fetchNoaa3DayGeomagToTextarea()">NOAA 3-day（Kp）をAPI取得 → 貼付</button>
@@ -340,7 +341,7 @@
         </div>
         <div class="row">
           <div>
-            <label>Kp 予報テキスト（NOAA geomag forecast）</label><br>
+            <label>Kp 予報テキスト（NOAA 3-day forecast）</label><br>
             <textarea id="noaaKpText" placeholder="自動取得 or 手動貼付"></textarea>
           </div>
         </div>
@@ -628,7 +629,8 @@
       "World1200_tec.txt","World1500_tec.txt","World1800_tec.txt","World2100_tec.txt","World2330_tec.txt"
     ];
 
-    const NOAA_3DAY_GEOMAG_TEXT_URL = "https://services.swpc.noaa.gov/text/3-day-geomag-forecast.txt";
+    // ★ Kp取得元を NOAA 3-Day Forecast text に変更
+    const NOAA_3DAY_FORECAST_TEXT_URL = "https://services.swpc.noaa.gov/text/3-day-forecast.txt";
     const NOAA_PLANETARY_K_INDEX_URL = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json";
     const NOAA_XRAY_FLARES_LATEST_URL = "https://services.swpc.noaa.gov/json/goes/primary/xray-flares-latest.json";
 
@@ -907,10 +909,11 @@
       }
     }
 
+    // ★ 関数名は既存のまま。中身だけ 3-day-forecast.txt に変更
     async function fetchNoaa3DayGeomagToTextarea() {
       try {
         setStatus("noaa3dayStatus", "取得中…");
-        const txt = await fetchText(NOAA_3DAY_GEOMAG_TEXT_URL);
+        const txt = await fetchText(NOAA_3DAY_FORECAST_TEXT_URL);
         const ta = document.getElementById("noaaKpText");
         if (ta) ta.value = txt;
         setStatus("noaa3dayStatus", "OK");
@@ -1467,57 +1470,161 @@
     }
 
     /* ============================
-     *  NOAA 3-day geomag forecast パース
+     *  NOAA 3-day Forecast の Kp index breakdown パース
+     *  ★ここが今回の修正本体
      * ============================ */
-    function parseNoaa3DayGeomag(text) {
-      // 目標：3日分のKp予報（最大値）を Date(UTC日)→Kp へ
-      // フォーマットは変動するので、日付行と "Kp" の数値列を保守的に抽出
-      const lines = String(text || "").split(/\r?\n/);
+    function escapeRegExp(str) {
+      return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
 
-      // 例: "Jan 23  5" のような行が入る場合もあるので、月英字/数字の両対応
+    function parseNoaaDayLabel(label, year) {
       const monthMap = {
-        jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11
+        Jan:0, Feb:1, Mar:2, Apr:3, May:4, Jun:5,
+        Jul:6, Aug:7, Sep:8, Oct:9, Nov:10, Dec:11
       };
+      const m = String(label || "").trim().match(/^([A-Z][a-z]{2})\s+(\d{1,2})$/);
+      if (!m) throw new Error(`NOAA日付ラベルの解析失敗: ${label}`);
+      const mon = monthMap[m[1]];
+      const day = parseInt(m[2], 10);
+      if (!isFinite(mon) || !isFinite(day)) throw new Error(`NOAA日付ラベル不正: ${label}`);
+      return {
+        label: `${m[1]} ${day}`,
+        date: new Date(Date.UTC(year, mon, day, 0, 0, 0)),
+        dayKey: toDayKeyUtc(new Date(Date.UTC(year, mon, day, 0, 0, 0)))
+      };
+    }
+
+    function extractThreeKpValuesFromRow(rowText) {
+      const matches = [...String(rowText || "").matchAll(/\d+(?:\.\d+)?(?:\s*\(G\d\))?/g)].map(m => m[0].trim());
+      const vals = matches.slice(0, 3).map(tok => {
+        const m = tok.match(/(\d+(?:\.\d+)?)/);
+        return m ? parseFloat(m[1]) : NaN;
+      }).filter(v => isFinite(v));
+      return vals;
+    }
+
+    function parseNoaa3DayGeomag(text) {
+      const flat = String(text || "")
+        .replace(/\r/g, " ")
+        .replace(/\n/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      if (!flat) return [];
+
+      const blockMatch = flat.match(
+        /NOAA Kp index breakdown\s+([A-Z][a-z]{2}\s+\d{1,2})-([A-Z][a-z]{2}\s+\d{1,2})\s+(\d{4})\s+([A-Z][a-z]{2}\s+\d{1,2})\s+([A-Z][a-z]{2}\s+\d{1,2})\s+([A-Z][a-z]{2}\s+\d{1,2})\s+(.+?)\s+Rationale:/i
+      );
+      if (!blockMatch) {
+        throw new Error("NOAA Kp index breakdown ブロックが見つかりません。");
+      }
+
+      const year = parseInt(blockMatch[3], 10);
+      const dayLabels = [blockMatch[4], blockMatch[5], blockMatch[6]];
+      const tableText = blockMatch[7];
+
+      const timeSlots = [
+        "00-03UT", "03-06UT", "06-09UT", "09-12UT",
+        "12-15UT", "15-18UT", "18-21UT", "21-00UT"
+      ];
+
+      const days = dayLabels.map(lbl => parseNoaaDayLabel(lbl, year));
+
+      const rows = [];
+      for (let i=0; i<timeSlots.length; i++) {
+        const slot = timeSlots[i];
+        const nextSlot = timeSlots[i+1];
+
+        let rowMatch = null;
+        if (nextSlot) {
+          rowMatch = tableText.match(new RegExp(`${escapeRegExp(slot)}\\s+(.+?)\\s+${escapeRegExp(nextSlot)}`, "i"));
+        } else {
+          rowMatch = tableText.match(new RegExp(`${escapeRegExp(slot)}\\s+(.+)$`, "i"));
+        }
+
+        if (!rowMatch) {
+          throw new Error(`NOAA Kp行の解析失敗: ${slot}`);
+        }
+
+        const values = extractThreeKpValuesFromRow(rowMatch[1]);
+        if (values.length !== 3) {
+          throw new Error(`NOAA Kp値の抽出失敗: ${slot} / ${rowMatch[1]}`);
+        }
+
+        const tm = slot.match(/^(\d{2})-(\d{2})UT$/);
+        if (!tm) throw new Error(`NOAA time slot 不正: ${slot}`);
+        const startHour = parseInt(tm[1], 10);
+        const endHour   = parseInt(tm[2], 10);
+
+        rows.push({
+          timeRange: slot,
+          startHour,
+          endHour,
+          values
+        });
+      }
+
+      const out = days.map((d, dayIndex) => {
+        const slots = rows.map(r => ({
+          timeRange: r.timeRange,
+          startHour: r.startHour,
+          endHour: r.endHour,
+          kp: r.values[dayIndex]
+        }));
+        return {
+          label: d.label,
+          dayKey: d.dayKey,
+          day: d.date,
+          slots
+        };
+      });
+
+      out.sort((a,b) => a.day - b.day);
+      return out;
+    }
+
+    function buildForecastKpSeriesFrom3DayText(txt, startUtc, nSteps, dtMin) {
+      let days;
+      try {
+        days = parseNoaa3DayGeomag(txt);
+      } catch (e) {
+        console.warn("NOAA 3-day Kp parse failed:", e);
+        return [];
+      }
+      if (!days.length) return [];
+
+      const dayMap = new Map(days.map(d => [d.dayKey, d]));
+      const firstDay = days[0].day;
+      const lastDay  = days[days.length-1].day;
+      const firstKey = days[0].dayKey;
+      const lastKey  = days[days.length-1].dayKey;
+
+      function chooseDayForTime(t) {
+        const day0 = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate(), 0, 0, 0));
+        if (day0 < firstDay) return dayMap.get(firstKey);
+        if (day0 > lastDay)  return dayMap.get(lastKey);
+        const dk = toDayKeyUtc(day0);
+        return dayMap.get(dk) || dayMap.get(lastKey);
+      }
+
+      function kpAtTime(t) {
+        const dayObj = chooseDayForTime(t);
+        if (!dayObj || !Array.isArray(dayObj.slots) || !dayObj.slots.length) return 3.0;
+
+        const minutes = t.getUTCHours() * 60 + t.getUTCMinutes();
+        let idx = Math.floor(minutes / 180); // 3h slot
+        idx = clamp(idx, 0, 7);
+
+        const slot = dayObj.slots[idx];
+        return isFinite(slot?.kp) ? slot.kp : 3.0;
+      }
 
       const out = [];
-      for (const ln of lines) {
-        // "2026 Jan 23" など
-        let m = ln.match(/(\d{4})\s+([A-Za-z]{3})\s+(\d{1,2})/);
-        if (m) {
-          const y = +m[1];
-          const mo = monthMap[m[2].toLowerCase()];
-          const da = +m[3];
-          const nums = ln.match(/[-+]?\d+(\.\d+)?/g) || [];
-          // 年/月/日も数値に含まれるので、最後の1個〜2個あたりをKp候補として見る
-          // だいたい Kp=0..9
-          const kpCand = nums.map(x=>+x).filter(v => v>=0 && v<=9.1);
-          const kp = kpCand.length ? kpCand[kpCand.length-1] : null;
-          if (kp != null) out.push({ day: new Date(Date.UTC(y, mo, da, 0,0,0)), kp });
-          continue;
-        }
-
-        // "Jan 23  2026" など
-        m = ln.match(/([A-Za-z]{3})\s+(\d{1,2}).*?(\d{4})/);
-        if (m) {
-          const mo = monthMap[m[1].toLowerCase()];
-          const da = +m[2];
-          const y  = +m[3];
-          const nums = ln.match(/[-+]?\d+(\.\d+)?/g) || [];
-          const kpCand = nums.map(x=>+x).filter(v => v>=0 && v<=9.1);
-          const kp = kpCand.length ? kpCand[kpCand.length-1] : null;
-          if (kp != null) out.push({ day: new Date(Date.UTC(y, mo, da, 0,0,0)), kp });
-          continue;
-        }
+      for (let s=0; s<=nSteps; s++) {
+        const t = new Date(startUtc.getTime() + s*dtMin*60*1000);
+        out.push({ t, kp: kpAtTime(t) });
       }
-
-      // 重複は日キーで最新優先
-      const byKey = new Map();
-      for (const r of out) {
-        const k = toDayKeyUtc(r.day);
-        byKey.set(k, r.kp);
-      }
-      const keys = [...byKey.keys()].sort();
-      return keys.map(k => ({ dayKey:k, day: new Date(k+"T00:00:00Z"), kp: byKey.get(k) }));
+      return out;
     }
 
     /* ============================
@@ -1819,30 +1926,6 @@
     }
 
     /* ============================
-     *  予報用Kp系列作成：3日予報 + 日周リピート + 線形補間
-     * ============================ */
-    function buildForecastKpSeriesFrom3DayText(txt, startUtc, nSteps, dtMin) {
-      const days = parseNoaa3DayGeomag(txt);
-      if (!days.length) return [];
-
-      // 3日分しかない場合、4日目は3日目を流用
-      const dayMap = new Map(days.map(d => [d.dayKey, d.kp]));
-      // startUtc の日キーから 0..3日
-      const out = [];
-      for (let s=0;s<=nSteps;s++) {
-        const t = new Date(startUtc.getTime() + s*dtMin*60*1000);
-        const dk = toDayKeyUtc(new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate(), 0,0,0)));
-        let kp = dayMap.get(dk);
-        if (kp == null) {
-          // 最後の既知日を採用
-          kp = days[days.length-1].kp;
-        }
-        out.push({ t, kp });
-      }
-      return out;
-    }
-
-    /* ============================
      *  入力TEC読み込み（BoM or NOAA）
      * ============================ */
     function readTecInputs() {
@@ -1933,7 +2016,7 @@
         }
         gForecastStart = startUtc;
 
-        // 予報用Kp（3-day text）
+        // 予報用Kp（NOAA 3-day forecast text の 3時間ごとの表）
         const kpTxt = document.getElementById("noaaKpText").value || "";
         gKpSeries = buildForecastKpSeriesFrom3DayText(kpTxt, startUtc, N_STEPS, DT_MINUTES);
         if (!gKpSeries.length) {
@@ -2460,4 +2543,3 @@ SStorm倍率（rStorm）は Mukhtarov風（季節×緯度×Kp）＋tail：
   </script>
 </body>
 </html>
-
