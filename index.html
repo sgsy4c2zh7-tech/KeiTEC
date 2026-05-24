@@ -118,6 +118,11 @@
       font-size: 11px; flex-wrap: wrap;
     }
     #timeSlider { flex:1; min-width:120px; }
+    #playButton {
+      flex: 0 0 auto;
+      min-width: 78px;
+      white-space: nowrap;
+    }
 
     #tecMap {
       flex:1;
@@ -547,6 +552,7 @@
       <div class="card slider-card">
         <div class="slider-row">
           <span>時間スライダー（0〜4日 / 30分刻み）</span>
+          <button id="playButton" class="secondary" type="button" onclick="togglePlayback()">▶ 動画再生</button>
           <input type="range" id="timeSlider" min="0" max="192" value="0" oninput="onSliderChange()">
           <span id="timeLabel">t = 0.0 h</span>
           <span id="utcLabel">UTC: --</span>
@@ -999,6 +1005,10 @@
     let gForecastTimes  = [];
     let gForecastStart  = null;
     let currentStepIndex = 0;
+
+    // ★追加：動画再生（時間スライダー自動送り）
+    let playbackTimer = null;
+    const PLAYBACK_INTERVAL_MS = 450;
 
     let gTecColorScale = [
       { limit: 10,  color: "#00ff00" },
@@ -1997,6 +2007,7 @@
      * ============================ */
     function runForecast() {
       try {
+        stopPlayback();
         const cfg = getConfigFromUI();
 
         // TEC入力
@@ -2168,6 +2179,69 @@
         if (d < bestD) { bestD = d; best = frames[i]; }
       }
       return best;
+    }
+
+    /* ============================
+     *  ★追加：動画再生（時間スライダー自動送り）
+     * ============================ */
+    function updatePlaybackButton() {
+      const btn = document.getElementById("playButton");
+      if (!btn) return;
+      btn.textContent = playbackTimer ? "⏸ 停止" : "▶ 動画再生";
+      btn.title = playbackTimer ? "時間スライダーの自動再生を停止" : "時間スライダーを自動で再生";
+    }
+
+    function stopPlayback() {
+      if (playbackTimer) {
+        clearInterval(playbackTimer);
+        playbackTimer = null;
+      }
+      updatePlaybackButton();
+    }
+
+    function startPlayback() {
+      if (!gForecastFrames.length || !gForecastTimes.length) {
+        logInfo("動画再生：先にTEC予報を計算してください。");
+        return;
+      }
+
+      const slider = document.getElementById("timeSlider");
+      if (!slider) return;
+
+      // 最終時刻で再生ボタンを押した場合は先頭から再生
+      if (currentStepIndex >= N_STEPS) {
+        currentStepIndex = 0;
+        slider.value = "0";
+        onSliderChange();
+      }
+
+      if (playbackTimer) return;
+
+      playbackTimer = setInterval(() => {
+        const s = document.getElementById("timeSlider");
+        if (!s || !gForecastFrames.length || !gForecastTimes.length) {
+          stopPlayback();
+          return;
+        }
+
+        let next = (parseInt(s.value, 10) || 0) + 1;
+        if (next > N_STEPS) {
+          stopPlayback();
+          return;
+        }
+
+        s.value = String(next);
+        onSliderChange();
+
+        if (next >= N_STEPS) stopPlayback();
+      }, PLAYBACK_INTERVAL_MS);
+
+      updatePlaybackButton();
+    }
+
+    function togglePlayback() {
+      if (playbackTimer) stopPlayback();
+      else startPlayback();
     }
 
     /* ============================
@@ -2508,6 +2582,7 @@ SStorm倍率（rStorm）は Mukhtarov風（季節×緯度×Kp）＋tail：
      *  リセット
      * ============================ */
     function resetAll() {
+      stopPlayback();
       gGrid = null;
       gForecastFrames = [];
       gForecastTimes  = [];
@@ -2533,6 +2608,7 @@ SStorm倍率（rStorm）は Mukhtarov風（季節×緯度×Kp）＋tail：
       fillForecastStartCandidates();
       initMapIfNeeded();
       updateLegend();
+      updatePlaybackButton();
       requestDraw();
 
       // 起動直後は Kp などは未計算なので軽く表示
