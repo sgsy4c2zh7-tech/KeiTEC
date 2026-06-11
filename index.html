@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <title>SWIFT-TEC v4.2 – Fourier TEC Forecast + GNSS DOP Tool (Leaflet版, 4日予報・加算＋Base抽出 / NOAA:2時間×12枚)</title>
+  <title>SWIFT-TEC v3 – TEC Forecast & Verification Tool (Leaflet版, 4日予報・加算＋Base抽出 / NOAA:2時間×12枚)</title>
 
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -118,6 +118,11 @@
       font-size: 11px; flex-wrap: wrap;
     }
     #timeSlider { flex:1; min-width:120px; }
+    #playButton {
+      flex: 0 0 auto;
+      min-width: 78px;
+      white-space: nowrap;
+    }
 
     #tecMap {
       flex:1;
@@ -167,6 +172,9 @@
       opacity:0.95;
     }
 
+    /* ============================
+     * ★追加：巨大UTC表示（地図の上にオーバーレイ）
+     * ============================ */
     #timeOverlay{
       position:absolute;
       top: 14px;
@@ -190,14 +198,9 @@
     @media (max-width: 900px){
       #timeOverlay{ font-size: 40px; }
     }
-
-    .sat-active { color:#86efac; border-color:#166534; }
-    .sat-inactive { color:#fca5a5; border-color:#7f1d1d; }
-    #satelliteSelectionList table td { vertical-align: middle; }
-    #satelliteSelectionList select { font-size:10px; padding:1px 3px; }
-
   </style>
 
+  <!-- パスワード保護 -->
   <script>
     (function () {
       const PASSWORD = "Haneishi";
@@ -213,11 +216,12 @@
 
 <body>
   <div class="page">
+    <!-- ============= サイドバー ============= -->
     <div class="sidebar">
       <div class="card">
         <div class="card-header">
-          <h1>SWIFT-TEC v4</h1>
-          <span>TEC Archive + Forecast + GNSS DOP</span>
+          <h1>SWIFT-TEC v3</h1>
+          <span>Global TEC Forecast (4-day, Base抽出＋加算)</span>
         </div>
         <div class="small">
           ・入力TECは <b>BoM</b> or <b>NOAA(GloTEC)</b> を選択<br>
@@ -226,10 +230,11 @@
           ・NOAA入力は <b>解析前日(UTC)の1日分</b> をAPI取得（<b>2時間おき12枚</b>）→ 2°×5°格子化<br>
           ・4日予報では NOAA12枚を <b>UTC時刻-of-dayで日周リピート</b>（模様が時間で動く）<br>
           ・今回の修正：<b>2時間→30分は線形補間</b>、BaseKp/Flareも<b>日周リピート＋線形補間</b><br>
-          ・今回の修正：<b>Kpは自動取得 / 手動入力タブの両対応</b><br>
+          ・今回の修正：<b>NOAA 3-day Forecast の Kp index breakdown を直接パース</b><br>
         </div>
       </div>
 
+      <!-- 0. 入力TECソース -->
       <div class="card">
         <div class="card-header">
           <h2>0. 入力TECソース</h2>
@@ -279,6 +284,7 @@
         </div>
       </div>
 
+      <!-- 1. TEC入力（テキスト貼付/保存用） -->
       <div class="card">
         <div class="card-header">
           <h2>1. TEC入力（テキスト貼付/保存用）</h2>
@@ -324,59 +330,29 @@
         <div class="small" id="bomInfo">※「入力を保存」を押した時点の内容をブラウザに保存。次回起動時に自動復元。</div>
       </div>
 
+      <!-- 2. NOAA Kp テキスト（予報用） -->
       <div class="card">
         <div class="card-header">
           <h2>2. NOAA Kp テキスト（予報用）</h2>
           <span>3-Day Forecast</span>
         </div>
-
         <div class="small">
-          ・自動取得タブ：NOAAの <b>3-day forecast text</b> を取得して使用<br>
-          ・手動入力タブ：<b>Kp index breakdown の表部分だけ</b>を貼り付けて使用
+          ・Kp（3日予報）は、NOAAの <b>3-day forecast text</b> を自動取得できます。<br>
+          ・<b>NOAA Kp index breakdown</b> の 3時間ごとの表をそのまま使用します。
         </div>
-
-        <div class="row" style="margin-top:6px;">
-          <button id="kpTabAutoBtn" onclick="switchKpInputTab('auto')">自動取得</button>
-          <button id="kpTabManualBtn" class="secondary" onclick="switchKpInputTab('manual')">手動入力</button>
-          <span class="small" id="kpInputModeLabel">現在: 自動取得</span>
+        <div class="row">
+          <button onclick="fetchNoaa3DayGeomagToTextarea()">NOAA 3-day（Kp）をAPI取得 → 貼付</button>
+          <span class="small" id="noaa3dayStatus"></span>
         </div>
-
-        <div id="kpAutoPane" style="margin-top:6px;">
-          <div class="row">
-            <button onclick="fetchNoaa3DayGeomagToTextarea()">NOAA 3-day（Kp）をAPI取得 → 貼付</button>
-            <span class="small" id="noaa3dayStatus"></span>
-          </div>
-          <div class="row">
-            <div>
-              <label>Kp 予報テキスト（NOAA 3-day forecast 全文）</label><br>
-              <textarea id="noaaKpText" placeholder="自動取得 or 手動貼付"></textarea>
-            </div>
-          </div>
-        </div>
-
-        <div id="kpManualPane" style="display:none; margin-top:6px;">
-          <div class="row">
-            <div>
-              <label>手動Kp表（Kp index breakdown の表部分だけ）</label><br>
-              <textarea id="manualKpTableText" placeholder="例:
-Mar 11       Mar 12       Mar 13
-00-03UT       2.67         1.67         1.67
-03-06UT       2.33         1.33         1.33
-06-09UT       2.00         1.33         1.33
-09-12UT       2.00         1.33         2.67
-12-15UT       1.00         1.33         3.33
-15-18UT       1.33         1.67         5.00 (G1)
-18-21UT       1.00         1.33         4.33
-21-00UT       1.67         1.67         4.33"></textarea>
-            </div>
-          </div>
-          <div class="small">
-            ※ 月日ヘッダ + 8行のUT帯だけ貼ればOKです。<br>
-            ※ 5.00 (G1) のような注記つきも読めます。
+        <div class="row">
+          <div>
+            <label>Kp 予報テキスト（NOAA 3-day forecast）</label><br>
+            <textarea id="noaaKpText" placeholder="自動取得 or 手動貼付"></textarea>
           </div>
         </div>
       </div>
 
+      <!-- 2b. Base作成用 Kp / フレア -->
       <div class="card">
         <div class="card-header">
           <h2>2b. Base 作成用 Kp / フレア</h2>
@@ -411,6 +387,7 @@ Mar 11       Mar 12       Mar 13
         </div>
       </div>
 
+      <!-- 3. Deep Flare Net 9領域（予報用） -->
       <div class="card">
         <div class="card-header">
           <h2>3. Deep Flare Net 領域（予報用）</h2>
@@ -436,6 +413,7 @@ Mar 11       Mar 12       Mar 13
         </table>
       </div>
 
+      <!-- 4. TEC カラーマップ設定 -->
       <div class="card">
         <div class="card-header"><h2>4. TEC カラーマップ設定</h2><span>TEC値 → 色</span></div>
         <div class="small">TEC [TECU] の上限と色を設定。色は地図と凡例に反映。</div>
@@ -454,6 +432,7 @@ Mar 11       Mar 12       Mar 13
         </div>
       </div>
 
+      <!-- 5. GPS L1誤差 カラーマップ設定 -->
       <div class="card">
         <div class="card-header"><h2>5. GPS L1誤差 カラーマップ</h2><span>誤差[m] → 色</span></div>
         <div class="small">L1即位誤差 [m] の上限と色を設定。TEC×kL1 で換算。</div>
@@ -472,6 +451,7 @@ Mar 11       Mar 12       Mar 13
         </div>
       </div>
 
+      <!-- 6. 係数設定 -->
       <div class="card">
         <div class="card-header"><h2>6. 係数設定（Advanced）</h2><span>Base / Storm / Flare / GPS / SStorm</span></div>
         <div class="small">
@@ -513,6 +493,7 @@ Mar 11       Mar 12       Mar 13
         </div>
       </div>
 
+      <!-- 7. 地域フォーカス -->
       <div class="card">
         <div class="card-header"><h2>7. 地域フォーカス</h2><span>地図ズーム</span></div>
         <div class="row">
@@ -543,109 +524,7 @@ Mar 11       Mar 12       Mar 13
         </div>
       </div>
 
-
-      <div class="card">
-        <div class="card-header"><h2>8a. NOAA TEC履歴アーカイブ</h2><span>30日保存 / 任意期間再生</span></div>
-        <div class="small">
-          ・GitHub Actionsで <b>毎日09:00 / 14:00 JST</b> にNOAA GloTECを取得し、<b>docs/data/tec</b> に30日分保存<br>
-          ・保存するTECは <b>NOAA 2時間値</b> のみ。UI側で <b>30分刻み</b> に補間して再生します<br>
-          ・DOP / DOP×TECモードでは、衛星配置を反映するため <b>10分刻み</b> で再生します<br>
-          ・data/tecの履歴から <b>フーリエ日周期モデル</b> で3日TEC予報を作成できます
-        </div>
-        <div class="row small" style="margin-top:6px;">
-          <div style="flex:1;">
-            開始UTC:<br>
-            <select id="archiveStartSelect" style="width:100%;"></select>
-          </div>
-          <div style="flex:1;">
-            終了UTC:<br>
-            <select id="archiveEndSelect" style="width:100%;"></select>
-          </div>
-        </div>
-        <div class="row" style="margin-top:4px;">
-          <button onclick="loadTecArchiveRange()">選択期間の過去TECを表示</button>
-          <button class="secondary" onclick="loadTecArchivePlusCurrentForecast()">過去 + 現在の予報を接続</button>
-        </div>
-        <div class="row" style="margin-top:4px;">
-          <button onclick="loadTecDataDriven3DayForecast()">data基準 3日TEC予報を作成</button>
-          <button class="secondary" onclick="loadTecArchiveIndex(true)">履歴index再読込</button>
-        </div>
-        <div class="row small" style="margin-top:4px;">
-          <div>
-            <label>予報基準日数</label><br>
-            <input id="tecForecastBaseDays" type="number" value="7" min="1" max="30" step="1" style="width:80px;">
-          </div>
-          <div>
-            <label>予報期間</label><br>
-            <span class="pill">72時間 / 3日</span>
-          </div>
-          <div>
-            <button class="secondary" onclick="loadGpsDopData()">GNSS TLE読込 / DOP準備</button>
-          </div>
-        </div>
-        <div class="small" id="archiveIndexInfo">TEC履歴indexを読み込み中…</div>
-        <div class="small" id="v4ArchiveStatus"></div>
-      </div>
-
-      <div class="card">
-        <div class="card-header"><h2>8b. GNSS / DOP設定</h2><span>multi-GNSS / satellite select</span></div>
-        <div class="small">
-          ・GPS / Galileo / GLONASS / BeiDou / QZSS のTLEを読み込み、選択衛星だけでDOPを計算します。<br>
-          ・各衛星は <b>使用ON/OFF</b> と <b>Active/Inactive</b> を手動切替できます。Inactive衛星はDOP計算から除外します。<br>
-          ・DOPモードでは、GDOP / PDOP / HDOP / VDOP / TDOP と DOP×TEC誤差を表示できます。<br>・TECは欠損補完＋値保持フーリエ平滑化で表示します。旧版のTEC振幅を潰さないように補正します。
-        </div>
-        <div class="row small" id="gnssConstellationBox" style="margin-top:6px;">
-          <label class="small"><input id="gnssConst_gps" type="checkbox" checked> GPS</label>
-          <label class="small"><input id="gnssConst_galileo" type="checkbox"> Galileo</label>
-          <label class="small"><input id="gnssConst_glonass" type="checkbox"> GLONASS</label>
-          <label class="small"><input id="gnssConst_beidou" type="checkbox"> BeiDou</label>
-          <label class="small"><input id="gnssConst_qzss" type="checkbox" checked> QZSS</label>
-        </div>
-        <div class="row small">
-          <div>
-            <label>仰角マスク [deg]</label><br>
-            <input id="dopElevationMaskDeg" type="number" value="10" min="0" max="45" step="1" style="width:80px;" onchange="markGnssSelectionChanged()">
-          </div>
-          <div>
-            <label>描画品質</label><br>
-            <select id="heatmapQualitySelect" onchange="requestDraw()">
-              <option value="0.45">軽量</option>
-              <option value="0.65" selected>標準</option>
-              <option value="1.0">高精細</option>
-            </select>
-          </div>
-          <div>
-            <label>フーリエ平滑化</label><br>
-            <select id="fourierSmoothSelect" onchange="requestDraw(); if (typeof updateLegend === 'function') updateLegend();">
-              <option value="0">OFF</option>
-              <option value="0.20" selected>弱（値保持・推奨）</option>
-              <option value="0.35">標準</option>
-              <option value="0.55">強</option>
-            </select>
-          </div>
-          <div>
-            <label>TEC色レンジ</label><br>
-            <select id="adaptiveColorScaleSelect" onchange="requestDraw(); if (typeof updateLegend === 'function') updateLegend();">
-              <option value="adaptive" selected>自動</option>
-              <option value="fixed">固定</option>
-            </select>
-          </div>
-        </div>
-        <div class="row">
-          <button onclick="loadGnssDopData()">GNSS TLE読込 / DOP準備</button>
-          <button class="secondary" onclick="setAllSatSelected(true)">全衛星使用</button>
-          <button class="secondary" onclick="setAllSatSelected(false)">全衛星解除</button>
-        </div>
-        <div class="row">
-          <button class="secondary" onclick="setAllSatActive(true)">全Active</button>
-          <button class="secondary" onclick="setAllSatActive(false)">全Inactive</button>
-        </div>
-        <div class="small" id="gnssQuickStatus">GNSS未読込</div>
-        <div id="satelliteSelectionList">
-          <div class="small">未読込。まず「GNSS TLE読込 / DOP準備」を押してください。</div>
-        </div>
-      </div>
-
+      <!-- 8. 実行 -->
       <div class="card">
         <div class="card-header"><h2>8. 実行</h2><span>予報 & 描画</span></div>
         <div class="row small">
@@ -668,10 +547,12 @@ Mar 11       Mar 12       Mar 13
       </div>
     </div>
 
+    <!-- ============= メイン領域 ============= -->
     <div class="main">
       <div class="card slider-card">
         <div class="slider-row">
-          <span>時間スライダー（TEC:30分刻み / DOP系:10分刻み）</span>
+          <span>時間スライダー（0〜4日 / 30分刻み）</span>
+          <button id="playButton" class="secondary" type="button" onclick="togglePlayback()">▶ 動画再生</button>
           <input type="range" id="timeSlider" min="0" max="192" value="0" oninput="onSliderChange()">
           <span id="timeLabel">t = 0.0 h</span>
           <span id="utcLabel">UTC: --</span>
@@ -687,31 +568,9 @@ Mar 11       Mar 12       Mar 13
             <select id="mapModeSelect" onchange="changeMapMode()">
               <option value="tec">TEC [TECU]</option>
               <option value="gps">GPS L1誤差 [m]</option>
-              <option value="satcount">可視GNSS衛星数</option>
-              <option value="gdop">GDOP</option>
-              <option value="pdop">PDOP</option>
-              <option value="hdop">HDOP</option>
-              <option value="vdop">VDOP</option>
-              <option value="tdop">TDOP</option>
-              <option value="gdoptec">GDOP × TEC 測位誤差 [m]</option>
-              <option value="pdoptec">PDOP × TEC 測位誤差 [m]</option>
-              <option value="hdoptec">HDOP × TEC 水平誤差 [m]</option>
-              <option value="vdoptec">VDOP × TEC 垂直誤差 [m]</option>
             </select>
           </div>
           <div style="flex:2;"><span class="small">※地図をズーム／ドラッグして任意地域の分布を確認できます。</span></div>
-        </div>
-        <div class="row small" style="margin-top:4px;">
-          <button onclick="playArchiveMovie()">▶ 再生</button>
-          <button class="secondary" onclick="stopArchiveMovie()">⏸ 停止</button>
-          <span>速度:</span>
-          <select id="movieSpeedSelect">
-            <option value="1">x1</option>
-            <option value="2">x2</option>
-            <option value="4">x4</option>
-          </select>
-          <label class="small"><input type="checkbox" id="movieAutoPlayAfterLoad"> 読込後に自動再生</label>
-          <span class="small">※TEC系は30分刻み、DOP/DOP×TEC系は10分刻みで再生します。</span>
         </div>
       </div>
 
@@ -736,9 +595,13 @@ Mar 11       Mar 12       Mar 13
     </div>
   </div>
 
+  <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <script>
+    /* ============================
+     * ★追加：巨大UTC表示の更新関数
+     * ============================ */
     function formatOverlayUtc(t){
       if (!(t instanceof Date) || isNaN(t.getTime())) return "UTC: --";
       const iso = t.toISOString().replace(".000Z","Z");
@@ -752,6 +615,9 @@ Mar 11       Mar 12       Mar 13
       el.textContent = formatOverlayUtc(t);
     }
 
+    /* ============================
+     *  画面にJSエラーを出す（デバッグ）
+     * ============================ */
     window.addEventListener("error", (ev) => {
       try {
         const msg = (ev && (ev.message || (ev.error && ev.error.message))) ? (ev.message || ev.error.message) : "unknown error";
@@ -760,12 +626,16 @@ Mar 11       Mar 12       Mar 13
       } catch {}
     });
 
+    /* ============================
+     *  API endpoints
+     * ============================ */
     const BOM_TEC_BASE_URL = "https://downloads.sws.bom.gov.au/data/Satellite/";
     const BOM_TEC_FILES_9 = [
       "World0000_tec.txt","World0300_tec.txt","World0600_tec.txt","World0900_tec.txt",
       "World1200_tec.txt","World1500_tec.txt","World1800_tec.txt","World2100_tec.txt","World2330_tec.txt"
     ];
 
+    // ★ Kp取得元を NOAA 3-Day Forecast text に変更
     const NOAA_3DAY_FORECAST_TEXT_URL = "https://services.swpc.noaa.gov/text/3-day-forecast.txt";
     const NOAA_PLANETARY_K_INDEX_URL = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json";
     const NOAA_XRAY_FLARES_LATEST_URL = "https://services.swpc.noaa.gov/json/goes/primary/xray-flares-latest.json";
@@ -788,33 +658,17 @@ Mar 11       Mar 12       Mar 13
       if (el) el.textContent = msg || "";
     }
 
-    let gKpInputMode = "auto";
-
-    function switchKpInputTab(mode) {
-      gKpInputMode = (mode === "manual") ? "manual" : "auto";
-
-      const autoPane   = document.getElementById("kpAutoPane");
-      const manualPane = document.getElementById("kpManualPane");
-      const autoBtn    = document.getElementById("kpTabAutoBtn");
-      const manualBtn  = document.getElementById("kpTabManualBtn");
-      const label      = document.getElementById("kpInputModeLabel");
-
-      if (autoPane)   autoPane.style.display   = (gKpInputMode === "auto") ? "" : "none";
-      if (manualPane) manualPane.style.display = (gKpInputMode === "manual") ? "" : "none";
-
-      if (autoBtn)   autoBtn.className   = (gKpInputMode === "auto") ? "" : "secondary";
-      if (manualBtn) manualBtn.className = (gKpInputMode === "manual") ? "" : "secondary";
-
-      if (label) label.textContent = `現在: ${gKpInputMode === "auto" ? "自動取得" : "手動入力"}`;
-    }
-
+    /* ============================
+     *  NOAA 前日(UTC) 2時間おき12枚（メモリ保持）
+     * ============================ */
     const NOAA_INPUT_IDS = ["bomInput1","bomInput2","bomInput3","bomInput4","bomInput5","bomInput6","bomInput7","bomInput8","bomInput9"];
 
-    let gNoaaDayFrames = null;
-    let gNoaaDayTimes  = null;
-    let gNoaaDayFiles  = null;
-    let gNoaaDayKey    = null;
+    let gNoaaDayFrames = null;  // length=12  (grid)
+    let gNoaaDayTimes  = null;  // Date[12] (target times)
+    let gNoaaDayFiles  = null;  // string[12]
+    let gNoaaDayKey    = null;  // "YYYY-MM-DD" (UTC)
 
+    // デバッグ9枚（textarea表示用）
     let gNoaaInputTimes = new Array(9).fill(null);
     let gNoaaInputFiles = new Array(9).fill(null);
 
@@ -951,8 +805,8 @@ Mar 11       Mar 12       Mar 13
 
     async function fetchNoaaGloTecPrevDay12_2hour(saveAfter=false) {
       try {
-        const intervalMin = 120;
-        const maxDiffMin  = 90;
+        const intervalMin = 120;  // 2時間
+        const maxDiffMin  = 90;   // 余裕
 
         setStatus("noaaTecStatus", "NOAA GloTEC 一覧(JSON)取得中…");
         const idx = await fetchJson(NOAA_GLOTEC_INDEX_URL);
@@ -1015,6 +869,7 @@ Mar 11       Mar 12       Mar 13
         gNoaaDayFiles  = picks.map(x=>x.fn);
         gNoaaDayKey    = prevKey;
 
+        // デバッグ表示（textareaは先頭9枚だけ）
         for (let k=0;k<9;k++) {
           const ta = document.getElementById(NOAA_INPUT_IDS[k]);
           if (ta) ta.value = texts[k] || "";
@@ -1033,6 +888,9 @@ Mar 11       Mar 12       Mar 13
       }
     }
 
+    /* ============================
+     *  BoM 9枚 API取得
+     * ============================ */
     async function fetchBomTec9FromApi(saveAfter=false) {
       try {
         setStatus("bomApiStatus", "BoM TEC を取得中…（9枚）");
@@ -1057,6 +915,7 @@ Mar 11       Mar 12       Mar 13
       }
     }
 
+    // ★ 関数名は既存のまま。中身だけ 3-day-forecast.txt に変更
     async function fetchNoaa3DayGeomagToTextarea() {
       try {
         setStatus("noaa3dayStatus", "取得中…");
@@ -1134,15 +993,22 @@ Mar 11       Mar 12       Mar 13
       }
     }
 
-    const FORECAST_HOURS = 24 * 4;
+    /* ============================
+     *  グローバル状態
+     * ============================ */
+    const FORECAST_HOURS = 24 * 4; // 4日
     const DT_MINUTES     = 30;
-    const N_STEPS = Math.round(FORECAST_HOURS * 60 / DT_MINUTES);
+    const N_STEPS = Math.round(FORECAST_HOURS * 60 / DT_MINUTES); // 192
 
     let gGrid = null;
     let gForecastFrames = [];
     let gForecastTimes  = [];
     let gForecastStart  = null;
     let currentStepIndex = 0;
+
+    // ★追加：動画再生（時間スライダー自動送り）
+    let playbackTimer = null;
+    const PLAYBACK_INTERVAL_MS = 450;
 
     let gTecColorScale = [
       { limit: 10,  color: "#00ff00" },
@@ -1183,6 +1049,9 @@ Mar 11       Mar 12       Mar 13
     }
     function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
 
+    /* ============================
+     *  ★描画をrAFでまとめる
+     * ============================ */
     let _drawQueued = false;
     function requestDraw() {
       if (_drawQueued) return;
@@ -1193,6 +1062,7 @@ Mar 11       Mar 12       Mar 13
       });
     }
 
+    /* ===== VALID DATE/TIME: 11/11/2025 00:00:00UTC ===== */
     function parseBomValidTime(text) {
       const lines = String(text || "").split(/\r?\n/);
       for (const line of lines) {
@@ -1210,6 +1080,7 @@ Mar 11       Mar 12       Mar 13
       return null;
     }
 
+    /* ====== BoM TEC テキスト → 格子データ ====== */
     function parseBoM(text) {
       const lines = String(text || "").split(/\r?\n/).filter(l => l.trim().length > 0);
       if (!lines.length) throw new Error("空のテキストです。");
@@ -1270,6 +1141,9 @@ Mar 11       Mar 12       Mar 13
       return { latArr, lonArr, nLat, nLon, grid, validTime };
     }
 
+    /* ============================
+     *  NOAA GloTEC GeoJSON → 2°×5° Grid
+     * ============================ */
     function parseNoaaGloTecGeoJson(text, validTimeFromFilename=null, targetLatStep=2.0, targetLonStep=5.0) {
       let obj;
       try { obj = JSON.parse(text); } catch { throw new Error("NOAA GeoJSONがJSONとして読めません"); }
@@ -1371,6 +1245,7 @@ Mar 11       Mar 12       Mar 13
       return { latArr, lonArr, nLat, nLon, grid, validTime };
     }
 
+    /* ============ 入力保存 ============ */
     function saveBomInputs() {
       const data = {
         tecSource: document.getElementById("tecSourceSelect")?.value || "bom",
@@ -1385,10 +1260,7 @@ Mar 11       Mar 12       Mar 13
         bomInput9: document.getElementById("bomInput9").value,
         noaaTimes: (gNoaaInputTimes || []).map(d => (d instanceof Date && !isNaN(d.getTime())) ? d.toISOString() : null),
         noaaFiles: (gNoaaInputFiles || []).map(x => x || null),
-        noaaPrevDayKey: gNoaaDayKey || null,
-        kpInputMode: gKpInputMode,
-        noaaKpText: document.getElementById("noaaKpText")?.value || "",
-        manualKpTableText: document.getElementById("manualKpTableText")?.value || ""
+        noaaPrevDayKey: gNoaaDayKey || null
       };
       localStorage.setItem(STORAGE_KEY_BOM, JSON.stringify(data));
       logInfo("入力（BoM/NOAA）を保存しました。（次回起動時に自動復元）");
@@ -1426,14 +1298,6 @@ Mar 11       Mar 12       Mar 13
           gNoaaInputFiles = gNoaaInputFiles.slice(0,9);
         }
         if (data.noaaPrevDayKey) gNoaaDayKey = data.noaaPrevDayKey;
-
-        if (data.noaaKpText !== undefined && document.getElementById("noaaKpText")) {
-          document.getElementById("noaaKpText").value = data.noaaKpText;
-        }
-        if (data.manualKpTableText !== undefined && document.getElementById("manualKpTableText")) {
-          document.getElementById("manualKpTableText").value = data.manualKpTableText;
-        }
-        if (data.kpInputMode) gKpInputMode = data.kpInputMode;
       } catch(e) {
         console.warn("入力の復元に失敗:", e);
       }
@@ -1444,6 +1308,7 @@ Mar 11       Mar 12       Mar 13
       logInfo("保存されていた 入力（BoM/NOAA）を削除しました。（テキスト内容はそのまま）");
     }
 
+    /* ============ Config（係数） ============ */
     function getConfigFromUI() {
       return {
         kBase:     parseFloat(document.getElementById("cfg_kBase").value)     || 1.0,
@@ -1504,6 +1369,7 @@ Mar 11       Mar 12       Mar 13
       updateFormulaText();
     }
 
+    /* ============ TEC/GPS色スケール ============ */
     function loadColorScales() {
       try {
         const s1 = localStorage.getItem(STORAGE_KEY_TCOL);
@@ -1517,6 +1383,7 @@ Mar 11       Mar 12       Mar 13
     }
 
     function syncColorScaleUiFromState() {
+      // TEC
       document.getElementById("tLimit1").value = gTecColorScale[0].limit;
       document.getElementById("tLimit2").value = gTecColorScale[1].limit;
       document.getElementById("tLimit3").value = gTecColorScale[2].limit;
@@ -1526,6 +1393,7 @@ Mar 11       Mar 12       Mar 13
       document.getElementById("tColor3").value = gTecColorScale[2].color;
       document.getElementById("tColor4").value = gTecColorScale[3].color;
 
+      // GPS
       document.getElementById("gLimit1").value = gGpsColorScale[0].limit;
       document.getElementById("gLimit2").value = gGpsColorScale[1].limit;
       document.getElementById("gLimit3").value = gGpsColorScale[2].limit;
@@ -1588,13 +1456,19 @@ Mar 11       Mar 12       Mar 13
       logInfo("GPS色スケールを初期化しました。");
     }
 
+    /* ============================
+     *  NOAA time_tag パース（堅牢化）
+     * ============================ */
     function toUtcDateFromSwpcTimeTag(s) {
+      // 例: "2026-01-21 00:00:00.000" / "2026-01-21T00:00:00Z" / "2026-01-21 00:00:00"
       const str = String(s || "").trim();
       if (!str) return null;
 
+      // ISO
       const d1 = new Date(str);
       if (!isNaN(d1.getTime())) return d1;
 
+      // "YYYY-MM-DD HH:MM:SS(.sss)"
       const m = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/);
       if (m) {
         const y  = +m[1], mo = +m[2], da = +m[3];
@@ -1605,6 +1479,10 @@ Mar 11       Mar 12       Mar 13
       return null;
     }
 
+    /* ============================
+     *  NOAA 3-day Forecast の Kp index breakdown パース
+     *  ★ここが今回の修正本体
+     * ============================ */
     function escapeRegExp(str) {
       return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     }
@@ -1715,104 +1593,15 @@ Mar 11       Mar 12       Mar 13
       return out;
     }
 
-    function parseManualKpTable(text, fallbackYear=null) {
-      const raw = String(text || "").replace(/\r/g, "");
-      const lines = raw.split("\n").map(s => s.trim()).filter(Boolean);
-      if (!lines.length) throw new Error("手動Kp表が空です。");
-
-      const monthMap = {
-        Jan:0, Feb:1, Mar:2, Apr:3, May:4, Jun:5,
-        Jul:6, Aug:7, Sep:8, Oct:9, Nov:10, Dec:11
-      };
-
-      const year = isFinite(fallbackYear) ? fallbackYear : (new Date()).getUTCFullYear();
-
-      const headerMatches = [...lines[0].matchAll(/([A-Z][a-z]{2})\s+(\d{1,2})/g)];
-      if (headerMatches.length < 3) {
-        throw new Error("手動Kp表のヘッダ行を読めません。");
-      }
-
-      const days = headerMatches.slice(0, 3).map(m => {
-        const monName = m[1];
-        const dayNum = parseInt(m[2], 10);
-        const mon = monthMap[monName];
-        const d = new Date(Date.UTC(year, mon, dayNum, 0, 0, 0));
-        return {
-          label: `${monName} ${dayNum}`,
-          day: d,
-          dayKey: toDayKeyUtc(d),
-          slots: []
-        };
-      });
-
-      const expectedSlots = [
-        "00-03UT", "03-06UT", "06-09UT", "09-12UT",
-        "12-15UT", "15-18UT", "18-21UT", "21-00UT"
-      ];
-
-      for (let i=1; i<lines.length; i++) {
-        const line = lines[i];
-        const tm = line.match(/^(00-03UT|03-06UT|06-09UT|09-12UT|12-15UT|15-18UT|18-21UT|21-00UT)\s+(.+)$/);
-        if (!tm) continue;
-
-        const slot = tm[1];
-        const rest = tm[2];
-
-        const values = [...rest.matchAll(/\d+(?:\.\d+)?(?:\s*\(G\d\))?/g)]
-          .map(m => {
-            const mm = m[0].match(/(\d+(?:\.\d+)?)/);
-            return mm ? parseFloat(mm[1]) : NaN;
-          })
-          .filter(v => isFinite(v))
-          .slice(0, 3);
-
-        if (values.length !== 3) {
-          throw new Error(`手動Kp表の値を3つ読めませんでした: ${line}`);
-        }
-
-        const sm = slot.match(/^(\d{2})-(\d{2})UT$/);
-        const startHour = parseInt(sm[1], 10);
-        const endHour   = parseInt(sm[2], 10);
-
-        for (let d=0; d<3; d++) {
-          days[d].slots.push({
-            timeRange: slot,
-            startHour,
-            endHour,
-            kp: values[d]
-          });
-        }
-      }
-
-      for (const day of days) {
-        day.slots.sort((a,b) => a.startHour - b.startHour);
-      }
-
-      const gotSlots = days[0].slots.map(x => x.timeRange);
-      for (const es of expectedSlots) {
-        if (!gotSlots.includes(es)) {
-          throw new Error(`手動Kp表の時間帯が不足しています: ${es}`);
-        }
-      }
-
-      return days;
-    }
-
-    function buildForecastKpSeriesFrom3DayText(txt, startUtc, nSteps, dtMin, mode="auto") {
+    function buildForecastKpSeriesFrom3DayText(txt, startUtc, nSteps, dtMin) {
       let days;
-
       try {
-        if (mode === "manual") {
-          days = parseManualKpTable(txt, startUtc.getUTCFullYear());
-        } else {
-          days = parseNoaa3DayGeomag(txt);
-        }
+        days = parseNoaa3DayGeomag(txt);
       } catch (e) {
-        console.warn("Kp parse failed:", e);
+        console.warn("NOAA 3-day Kp parse failed:", e);
         return [];
       }
-
-      if (!days || !days.length) return [];
+      if (!days.length) return [];
 
       const dayMap = new Map(days.map(d => [d.dayKey, d]));
       const firstDay = days[0].day;
@@ -1833,7 +1622,7 @@ Mar 11       Mar 12       Mar 13
         if (!dayObj || !Array.isArray(dayObj.slots) || !dayObj.slots.length) return 3.0;
 
         const minutes = t.getUTCHours() * 60 + t.getUTCMinutes();
-        let idx = Math.floor(minutes / 180);
+        let idx = Math.floor(minutes / 180); // 3h slot
         idx = clamp(idx, 0, 7);
 
         const slot = dayObj.slots[idx];
@@ -1848,12 +1637,16 @@ Mar 11       Mar 12       Mar 13
       return out;
     }
 
+    /* ============================
+     *  Base用Kp（noaa-planetary-k-index.json）パース
+     * ============================ */
     function parseNoaaPlanetaryKIndexJson(textOrJson) {
       let arr = textOrJson;
       if (typeof textOrJson === "string") {
         try { arr = JSON.parse(textOrJson); } catch { return []; }
       }
       if (!Array.isArray(arr)) return [];
+      // 先頭行がヘッダの場合あり
       const out = [];
       for (let i=0;i<arr.length;i++) {
         const row = arr[i];
@@ -1867,6 +1660,9 @@ Mar 11       Mar 12       Mar 13
       return out;
     }
 
+    /* ============================
+     *  Base用フレア JSON パース
+     * ============================ */
     function parseBaseFlareJson(text) {
       if (!text) return [];
       let arr;
@@ -1884,10 +1680,17 @@ Mar 11       Mar 12       Mar 13
       return out;
     }
 
+    /* ============================
+     *  TOD（日周）化：時刻-of-dayをキーに線形補間できる形へ
+     * ============================ */
     function buildTodSeriesFromTimeSeries(series, valKey, stepMinutes=30) {
+      // series: [{t:Date, kp:...}] など
+      // 戻り：{ stepMinutes, values[1440/step], maskValid }
       const n = Math.round(24*60/stepMinutes);
       const values = new Array(n).fill(null);
 
+      // 同じ日のデータが複数ある想定（1日分を期待）だが、複数日でも「最頻日」を採用
+      // まず日キーで分類
       const byDay = new Map();
       for (const r of series) {
         const dk = toDayKeyUtc(r.t);
@@ -1896,12 +1699,14 @@ Mar 11       Mar 12       Mar 13
       }
       if (!byDay.size) return { stepMinutes, values };
 
+      // 最も件数が多い日を採用
       let bestKey = null, bestN = -1;
       for (const [k, v] of byDay.entries()) {
         if (v.length > bestN) { bestN = v.length; bestKey = k; }
       }
       const rows = byDay.get(bestKey).slice().sort((a,b)=>a.t-b.t);
 
+      // 30分グリッドに最近傍→後で補間
       for (const r of rows) {
         const hh = r.t.getUTCHours();
         const mm = r.t.getUTCMinutes();
@@ -1911,6 +1716,7 @@ Mar 11       Mar 12       Mar 13
         values[k] = (isFinite(v) ? v : null);
       }
 
+      // 線形補間（循環：両端も繋ぐ）
       const out = values.slice();
       const findNext = (i) => {
         for (let k=1;k<=n;k++) {
@@ -1922,6 +1728,7 @@ Mar 11       Mar 12       Mar 13
 
       for (let i=0;i<n;i++) {
         if (out[i] != null) continue;
+        // 前（循環）探す
         let prev = null;
         for (let k=1;k<=n;k++) {
           const j = (i-k+n)%n;
@@ -1937,6 +1744,7 @@ Mar 11       Mar 12       Mar 13
         out[i] = v0 + (v1 - v0) * frac;
       }
 
+      // まだnullが残るなら全部平均で埋め
       const mean = out.filter(v=>v!=null).reduce((a,b)=>a+b,0) / Math.max(1,out.filter(v=>v!=null).length);
       for (let i=0;i<n;i++) if (out[i]==null) out[i]=mean;
 
@@ -1957,17 +1765,23 @@ Mar 11       Mar 12       Mar 13
       return v0 + (v1 - v0) * f;
     }
 
+    /* ============================
+     *  NOAA 12枚（2時間おき）のTOD化（30分で補間）
+     * ============================ */
     function buildNoaaTecTodFrom12Frames(frames12, times12, stepMinutes=30) {
       if (!frames12 || !frames12.length || !times12 || !times12.length) return null;
       const n = Math.round(24*60/stepMinutes);
       const out = new Array(n).fill(null);
 
-      const t0 = times12[0];
+      // 2時間枠→30分枠に線形補間（グリッド単位で）
+      // まず 12 枠 index (0..11) を 0..24h に対応
+      // 30分枠 k の時刻-of-day を取り、前後2時間枠を見つける
+      const t0 = times12[0]; // prev day 00:00Z を期待
       const dayStart = new Date(Date.UTC(t0.getUTCFullYear(), t0.getUTCMonth(), t0.getUTCDate(), 0,0,0));
       for (let k=0;k<n;k++) {
         const tk = new Date(dayStart.getTime() + k*stepMinutes*60*1000);
         const mins = (tk - dayStart)/60000;
-        const x = mins / 120;
+        const x = mins / 120;         // 2時間刻み
         let i0 = Math.floor(x);
         let f  = x - i0;
         if (i0 < 0) i0 = 0;
@@ -1977,6 +1791,7 @@ Mar 11       Mar 12       Mar 13
         const A = frames12[i0];
         const B = frames12[i1];
 
+        // グリッドが同一前提（parseNoaaGloTecGeoJsonで2°×5°固定）
         const g = { latArr:A.latArr, lonArr:A.lonArr, nLat:A.nLat, nLon:A.nLon, grid: null };
         const grid = Array.from({length:g.nLat}, ()=>Array.from({length:g.nLon}, ()=>0));
         for (let i=0;i<g.nLat;i++) {
@@ -2003,7 +1818,11 @@ Mar 11       Mar 12       Mar 13
       return todTec.frames[idx];
     }
 
+    /* ============================
+     *  SStorm（rStorm）: Mukhtarov風（季節・緯度・Kp依存）＋tail
+     * ============================ */
     function wrapMonth01(d) {
+      // 1..12
       return d.getUTCMonth() + 1;
     }
 
@@ -2014,29 +1833,37 @@ Mar 11       Mar 12       Mar 13
     }
 
     function seasonalFactor(month, sigmaM) {
+      // 例：春分/秋分あたりがピーク、または冬/夏ピーク等の好みに合わせて mu を変えられる
+      // ここは「年2峰（3月/9月）」型：max(gauss(mu=3), gauss(mu=9))
       const g1 = gaussian(month, 3.0, sigmaM);
       const g2 = gaussian(month, 9.0, sigmaM);
       return Math.max(g1, g2);
     }
 
     function latFactor(latDeg, sigmaLat) {
+      // 低緯度～中緯度の嵐の強さ（例：±15〜25度付近）を盛るなら mu=20, mu=-20 の双峰
       const gN = gaussian(latDeg,  20.0, sigmaLat);
       const gS = gaussian(latDeg, -20.0, sigmaLat);
       return Math.max(gN, gS);
     }
 
     function kpToRStormBase(kp) {
+      // Kp→嵐倍率の基本形（単調増加）
+      // 0..9 を想定、r>=1
       const k = clamp(kp, 0, 9);
+      // 例：Kp=3で1.05、Kp=6で1.35、Kp=9で2.0 くらい
       return 1.0 + 0.02*k*k + 0.01*k;
     }
 
     function tailFactor(kp, cfg) {
+      // スーパーストーム尾部：Kp> Kc で急増（ロジスティック/指数的）
       if (!cfg.useTail) return 1.0;
       const Kc = cfg.tailKc;
       const w  = Math.max(0.05, cfg.tailW);
       const A0 = Math.max(0.0, cfg.tailA0);
 
       const x = (kp - Kc) / w;
+      // logistic in [0,1]
       const s = 1.0 / (1.0 + Math.exp(-x));
       return 1.0 + A0 * s * s;
     }
@@ -2047,15 +1874,21 @@ Mar 11       Mar 12       Mar 13
       const Flat = latFactor(latDeg, cfg.sigmaLat);
       const r0 = kpToRStormBase(kp);
 
+      // Mukhtarov “っぽく”：季節・緯度で嵐の効き方をスケール
+      // r = 1 + (r0-1)* (a + b*Fm*Flat)
       const a = 0.35;
       const b = 1.15;
       let r = 1.0 + (r0 - 1.0) * (a + b * Fm * Flat);
 
+      // tail
       r *= tailFactor(kp, cfg);
       if (!isFinite(r) || r < 0.5) r = 1.0;
       return r;
     }
 
+    /* ============================
+     *  フレア入力（Deep Flare Net 9領域）
+     * ============================ */
     function getDeepFlareInputs() {
       const regs = [];
       for (let i=1;i<=9;i++) {
@@ -2064,6 +1897,7 @@ Mar 11       Mar 12       Mar 13
         const use = !!document.getElementById("fu"+i).checked;
         regs.push({ Px, Pm, use });
       }
+      // 使用領域の平均を採用（簡易）
       const xs = regs.filter(r=>r.use).map(r=>r.Px);
       const ms = regs.filter(r=>r.use).map(r=>r.Pm);
       const Px = xs.length ? xs.reduce((a,b)=>a+b,0)/xs.length : 0;
@@ -2072,28 +1906,46 @@ Mar 11       Mar 12       Mar 13
     }
 
     function flareMultiplier(Px, Pm, cfg) {
+      // 0..100% を 0..1 に
       const px = clamp(Px, 0, 100) / 100;
       const pm = clamp(Pm, 0, 100) / 100;
+      // 例：β で飽和
       const beta = clamp(cfg.betaFlare, 0.0, 2.0);
       const f = cfg.kX * px + cfg.kM * pm;
+      // multiplier >=1
       return 1.0 + beta * f;
     }
 
+    /* ============================
+     *  Base抽出＋加算モデル（あなたの要件式に沿う）
+     * ============================ */
     function computeBaseFromInput(inputTec, kpBase, flareBase, cfg) {
+      // ここで「入力TEC から 嵐/フレア成分を引き算して BaseTEC を作る」役
+      // ただし “加算モデル”の要件上、Baseは非負にクリップ
+      // Baseは「静穏時の成分」に近いもの。ここは運用上の近似として以下を採用：
+      // BaseTEC = inputTec / ( kBase * rStorm_base(lat,t,kpBase) * flareMul_base(flareBase) )
+      // つまり「観測(入力)を、嵐倍率とフレア倍率で割って静穏へ戻す」設計。
       const mFlBase = flareMultiplier(flareBase.Px, flareBase.Pm, cfg);
+      // rStorm_base は KpB を使う（緯度依存が入るので compute時にlat必要 → 呼び元でlat毎に計算）
       return { mFlBase };
     }
 
     function computeDeltaStorm(baseTec, rStormNow, cfg) {
+      // ★要件：ΔStorm = kStorm * BaseTEC * (rStorm - 1)
       return cfg.kStorm * baseTec * (rStormNow - 1.0);
     }
 
+    /* ============================
+     *  入力TEC読み込み（BoM or NOAA）
+     * ============================ */
     function readTecInputs() {
       const src = document.getElementById("tecSourceSelect").value;
       if (src === "noaa") {
+        // NOAA運用：gNoaaDayFrames(12)を必須とする
         if (!gNoaaDayFrames || gNoaaDayFrames.length !== 12) {
           throw new Error("NOAA入力が未取得です。「NOAA 解析前日 12枚」ボタンを押してください。");
         }
+        // ベース格子は NOAA 2°×5°
         return { source:"noaa", frames: gNoaaDayFrames, times: gNoaaDayTimes, gridMeta: gNoaaDayFrames[0] };
       } else {
         const ids = NOAA_INPUT_IDS;
@@ -2107,10 +1959,15 @@ Mar 11       Mar 12       Mar 13
           times.push(f.validTime);
         }
         if (!frames.length) throw new Error("BoM入力が空です。API取得 or コピペしてください。");
+        // BoMは9枚。予報は「UTC時刻-of-dayで日周リピート」を使う
+        // 基準格子を先頭で固定
         return { source:"bom", frames, times, gridMeta: frames[0] };
       }
     }
 
+    /* ============================
+     *  予報開始候補（UI select）作成
+     * ============================ */
     function fillForecastStartCandidates() {
       const sel = document.getElementById("forecastStartSelect");
       if (!sel) return;
@@ -2134,6 +1991,7 @@ Mar 11       Mar 12       Mar 13
           opt.textContent = t.toISOString().replace(".000Z","Z");
           sel.appendChild(opt);
         }
+        // デフォルトは最初
         sel.value = uniq[0];
       } catch {
         const opt = document.createElement("option");
@@ -2144,11 +2002,18 @@ Mar 11       Mar 12       Mar 13
       }
     }
 
+    /* ============================
+     *  予報本体
+     * ============================ */
     function runForecast() {
       try {
+        stopPlayback();
         const cfg = getConfigFromUI();
+
+        // TEC入力
         const input = readTecInputs();
 
+        // 予報開始
         const sel = document.getElementById("forecastStartSelect");
         let startUtc = null;
         if (sel && sel.value) {
@@ -2156,30 +2021,21 @@ Mar 11       Mar 12       Mar 13
           if (!isNaN(d.getTime())) startUtc = d;
         }
         if (!startUtc) {
+          // 最も早いvalidTime
           const times = input.times.filter(t=>t instanceof Date && !isNaN(t.getTime())).sort((a,b)=>a-b);
           startUtc = times[0] || new Date();
         }
         gForecastStart = startUtc;
 
-        let kpTxt = "";
-        if (gKpInputMode === "manual") {
-          kpTxt = document.getElementById("manualKpTableText").value || "";
-        } else {
-          kpTxt = document.getElementById("noaaKpText").value || "";
-        }
-
-        gKpSeries = buildForecastKpSeriesFrom3DayText(
-          kpTxt,
-          startUtc,
-          N_STEPS,
-          DT_MINUTES,
-          gKpInputMode
-        );
-
+        // 予報用Kp（NOAA 3-day forecast text の 3時間ごとの表）
+        const kpTxt = document.getElementById("noaaKpText").value || "";
+        gKpSeries = buildForecastKpSeriesFrom3DayText(kpTxt, startUtc, N_STEPS, DT_MINUTES);
         if (!gKpSeries.length) {
+          // 最低限：全部3.0
           gKpSeries = Array.from({length:N_STEPS+1}, (_,s)=>({ t:new Date(startUtc.getTime()+s*DT_MINUTES*60000), kp:3.0 }));
         }
 
+        // Base用Kp/Flare：空なら予報Kp / flare=0
         const baseKpRaw = document.getElementById("baseKpJson").value || "";
         const baseKpParsed = parseNoaaPlanetaryKIndexJson(baseKpRaw);
         gBaseKpSeries = baseKpParsed.length
@@ -2189,28 +2045,35 @@ Mar 11       Mar 12       Mar 13
         const baseFlRaw = document.getElementById("baseFlareJson").value || "";
         gBaseFlareSeries = parseBaseFlareJson(baseFlRaw);
         if (!gBaseFlareSeries.length) {
+          // flare無し
           gBaseFlareSeries = [{ t: startUtc, Px:0, Pm:0 }];
         }
 
+        // TOD化：BaseKp/Flare（日周リピート + 線形補間）
         gBaseKpTod = buildTodSeriesFromTimeSeries(gBaseKpSeries, "kp", 30);
         gBaseFlareTod = buildTodSeriesFromTimeSeries(
           gBaseFlareSeries.map(x=>({ t:x.t, Px:x.Px, Pm:x.Pm })), "Px", 30
         );
+        // Pmは別で
         const baseFlarePmTod = buildTodSeriesFromTimeSeries(
           gBaseFlareSeries.map(x=>({ t:x.t, Pm:x.Pm })), "Pm", 30
         );
+        // 合体用に保持
         gBaseFlareTod._pm = baseFlarePmTod;
 
+        // NOAA TEC TOD（12枚→30分補間）
         let tecTod = null;
         if (input.source === "noaa") {
           tecTod = buildNoaaTecTodFrom12Frames(input.frames, input.times, 30);
         }
 
+        // 予報フレーム生成
         const gridMeta = input.gridMeta;
         gGrid = { latArr:gridMeta.latArr, lonArr:gridMeta.lonArr, nLat:gridMeta.nLat, nLon:gridMeta.nLon };
         gForecastFrames = [];
         gForecastTimes  = [];
 
+        // Deep Flare Net（予報用）：時刻依存無しの簡易（将来はAR位置等で時刻依存させてもOK）
         const flarePred = getDeepFlareInputs();
 
         const dbgMix = !!document.getElementById("dbgNoaaMix").checked;
@@ -2220,25 +2083,33 @@ Mar 11       Mar 12       Mar 13
           const t = new Date(startUtc.getTime() + s*DT_MINUTES*60*1000);
           gForecastTimes.push(t);
 
+          // 入力TEC：日周リピート（UTC時刻-of-dayで選ぶ）
           let inputFrame = null;
           if (input.source === "noaa") {
             inputFrame = noaaTecTodFrameAt(tecTod, t);
           } else {
+            // BoM 9枚：最近傍（時刻-of-day）
             inputFrame = pickBomFrameByUtcTod(input.frames, input.times, t);
           }
 
+          // KpF（予報）
           const kpF = (gKpSeries[s] && isFinite(gKpSeries[s].kp)) ? gKpSeries[s].kp : 3.0;
 
+          // KpB（Base）
           const kpB = todValueAt(gBaseKpTod, t);
           const flareB = {
             Px: todValueAt(gBaseFlareTod, t) ?? 0,
             Pm: todValueAt(gBaseFlareTod._pm, t) ?? 0
           };
 
+          // 予報フレア倍率（DeepFlare）
           const mFlPred = flareMultiplier(flarePred.Px, flarePred.Pm, cfg);
+
+          // Base抽出は「入力を嵐倍率&フレア倍率で割る」
+          // rStorm_base は緯度で変わるので格子ごとに計算
           const outGrid = Array.from({length:gGrid.nLat}, ()=>Array.from({length:gGrid.nLon}, ()=>0));
 
-          const baseHelper = computeBaseFromInput(0, kpB, flareB, cfg);
+          const baseHelper = computeBaseFromInput(0, kpB, flareB, cfg); // mFlBase を得る
           const mFlBase = baseHelper.mFlBase;
 
           for (let i=0;i<gGrid.nLat;i++) {
@@ -2250,12 +2121,18 @@ Mar 11       Mar 12       Mar 13
               const tecIn = inputFrame.grid[i][j];
               const tecInSafe = isFinite(tecIn) ? tecIn : 0;
 
+              // BaseTEC（静穏推定）
               let baseTec = tecInSafe / Math.max(1e-6, (cfg.kBase * rB * mFlBase));
               if (!isFinite(baseTec) || baseTec < 0) baseTec = 0;
 
+              // ΔStorm（要件式）
               const dStorm = computeDeltaStorm(baseTec, rF, cfg);
+
+              // ΔFlare：Baseに対して flarePred を掛けた増分（ここはあなたの体系に合わせて）
+              // 予報フレア倍率が1なら0増分。Base TEC に対して乗算増分。
               const dFlare = baseTec * (mFlPred - 1.0);
 
+              // Forecast = Base + ΔStorm + ΔFlare
               let tecOut = baseTec + dStorm + dFlare;
               if (!isFinite(tecOut) || tecOut < 0) tecOut = 0;
 
@@ -2266,12 +2143,11 @@ Mar 11       Mar 12       Mar 13
           gForecastFrames.push(outGrid);
 
           if (dbgMix && input.source === "noaa" && s===0) {
-            mixInfo = `NOAA_TOD(day=${tecTod?.dayKey || "?"}, step=${tecTod?.stepMinutes || "?"}min) / BaseKpTOD(day=${gBaseKpTod?.dayKey || "?"}) / KpMode=${gKpInputMode}`;
+            mixInfo = `NOAA_TOD(day=${tecTod?.dayKey || "?"}, step=${tecTod?.stepMinutes || "?"}min) / BaseKpTOD(day=${gBaseKpTod?.dayKey || "?"})`;
           }
         }
 
         currentStepIndex = 0;
-        document.getElementById("timeSlider").max = String(N_STEPS);
         document.getElementById("timeSlider").value = "0";
         document.getElementById("timeLabel").textContent = `t = 0.0 h`;
         document.getElementById("utcLabel").textContent  = `UTC: ${startUtc.toISOString().replace(".000Z","Z")}`;
@@ -2291,6 +2167,7 @@ Mar 11       Mar 12       Mar 13
     }
 
     function pickBomFrameByUtcTod(frames, times, tUtc) {
+      // times[i] の UTC HH:MM に対して最近傍
       const mins = tUtc.getUTCHours()*60 + tUtc.getUTCMinutes();
       let best = frames[0], bestD = 1e99;
       for (let i=0;i<frames.length;i++) {
@@ -2304,11 +2181,76 @@ Mar 11       Mar 12       Mar 13
       return best;
     }
 
+    /* ============================
+     *  ★追加：動画再生（時間スライダー自動送り）
+     * ============================ */
+    function updatePlaybackButton() {
+      const btn = document.getElementById("playButton");
+      if (!btn) return;
+      btn.textContent = playbackTimer ? "⏸ 停止" : "▶ 動画再生";
+      btn.title = playbackTimer ? "時間スライダーの自動再生を停止" : "時間スライダーを自動で再生";
+    }
+
+    function stopPlayback() {
+      if (playbackTimer) {
+        clearInterval(playbackTimer);
+        playbackTimer = null;
+      }
+      updatePlaybackButton();
+    }
+
+    function startPlayback() {
+      if (!gForecastFrames.length || !gForecastTimes.length) {
+        logInfo("動画再生：先にTEC予報を計算してください。");
+        return;
+      }
+
+      const slider = document.getElementById("timeSlider");
+      if (!slider) return;
+
+      // 最終時刻で再生ボタンを押した場合は先頭から再生
+      if (currentStepIndex >= N_STEPS) {
+        currentStepIndex = 0;
+        slider.value = "0";
+        onSliderChange();
+      }
+
+      if (playbackTimer) return;
+
+      playbackTimer = setInterval(() => {
+        const s = document.getElementById("timeSlider");
+        if (!s || !gForecastFrames.length || !gForecastTimes.length) {
+          stopPlayback();
+          return;
+        }
+
+        let next = (parseInt(s.value, 10) || 0) + 1;
+        if (next > N_STEPS) {
+          stopPlayback();
+          return;
+        }
+
+        s.value = String(next);
+        onSliderChange();
+
+        if (next >= N_STEPS) stopPlayback();
+      }, PLAYBACK_INTERVAL_MS);
+
+      updatePlaybackButton();
+    }
+
+    function togglePlayback() {
+      if (playbackTimer) stopPlayback();
+      else startPlayback();
+    }
+
+    /* ============================
+     *  スライダー/表示更新
+     * ============================ */
     function onSliderChange() {
       const slider = document.getElementById("timeSlider");
       const v = parseInt(slider.value, 10) || 0;
-      const maxStep = Math.max(0, (gForecastTimes && gForecastTimes.length ? gForecastTimes.length - 1 : N_STEPS));
-      currentStepIndex = clamp(v, 0, maxStep);
+      currentStepIndex = clamp(v, 0, N_STEPS);
       const t = gForecastTimes[currentStepIndex] || gForecastStart;
       const hours = (currentStepIndex * DT_MINUTES)/60;
       document.getElementById("timeLabel").textContent = `t = ${hours.toFixed(1)} h`;
@@ -2339,6 +2281,9 @@ Mar 11       Mar 12       Mar 13
       if (el) el.textContent = `KpF=${kpF!=null?kpF.toFixed(2):"--"} / KpB=${kpB!=null?kpB.toFixed(2):"--"}`;
     }
 
+    /* ============================
+     *  地図初期化 & 描画
+     * ============================ */
     function initMapIfNeeded() {
       if (map) return;
 
@@ -2352,6 +2297,7 @@ Mar 11       Mar 12       Mar 13
         attribution: "&copy; OpenStreetMap contributors"
       }).addTo(map);
 
+      // canvas overlay
       const container = document.getElementById("tecMap");
       tecCanvas = document.createElement("canvas");
       tecCanvas.className = "tec-canvas-overlay";
@@ -2368,6 +2314,7 @@ Mar 11       Mar 12       Mar 13
       map.on("move zoom resize", ()=>requestDraw());
       resizeCanvas();
 
+      // click to show grid point
       map.on("click", (ev) => {
         try {
           const lat = ev.latlng.lat;
@@ -2385,6 +2332,7 @@ Mar 11       Mar 12       Mar 13
 
     function sampleAtLatLon(lat, lon) {
       if (!gGrid || !gForecastFrames.length) return "未計算です。";
+      // 最寄り格子
       let bestI=0, bestJ=0, bestD=1e99;
       for (let i=0;i<gGrid.nLat;i++) {
         const dLat = Math.abs(gGrid.latArr[i]-lat);
@@ -2454,6 +2402,8 @@ Mar 11       Mar 12       Mar 13
       const cfg = getConfigFromUI();
       const scale = (mapMode === "gps") ? gGpsColorScale : gTecColorScale;
 
+      // 簡易：格子点を矩形で塗る（2°×5°でも十分）
+      // 緯度経度の四隅をピクセルに変換し、矩形塗り
       for (let i=0;i<gGrid.nLat-1;i++) {
         for (let j=0;j<gGrid.nLon-1;j++) {
           const lat0 = gGrid.latArr[i];
@@ -2513,6 +2463,7 @@ Mar 11       Mar 12       Mar 13
         const h = c.height;
         for (let y=0;y<h;y++) {
           const t = 1 - y/(h-1);
+          // 0..1 を scale にマップ
           const vMin = scale[0].limit;
           const vMax = scale[scale.length-1].limit;
           const v = vMin + (vMax - vMin)*t;
@@ -2522,6 +2473,9 @@ Mar 11       Mar 12       Mar 13
       }, 0);
     }
 
+    /* ============================
+     *  フォーミュラ表示
+     * ============================ */
     function updateFormulaText() {
       const cfg = getConfigFromUI();
       const txt = `
@@ -2553,6 +2507,9 @@ SStorm倍率（rStorm）は Mukhtarov風（季節×緯度×Kp）＋tail：
       document.getElementById("formulaText").textContent = txt;
     }
 
+    /* ============================
+     *  地域フォーカス
+     * ============================ */
     function focusRegion(name) {
       if (!map) initMapIfNeeded();
       const regions = {
@@ -2584,11 +2541,15 @@ SStorm倍率（rStorm）は Mukhtarov風（季節×緯度×Kp）＋tail：
       map.setView([15, 130], 3);
     }
 
+    /* ============================
+     *  CSV出力（4日分）
+     * ============================ */
     function exportTecCsv4day() {
       if (!gGrid || !gForecastFrames.length || !gForecastTimes.length) {
         logInfo("CSV出力：先に予報計算してください。");
         return;
       }
+      // 行：time, lat, lon, tec, gps
       const cfg = getConfigFromUI();
       const rows = [];
       rows.push(["time_utc","lat","lon","tec_tecu","gpsL1_m"].join(","));
@@ -2617,13 +2578,16 @@ SStorm倍率（rStorm）は Mukhtarov風（季節×緯度×Kp）＋tail：
       logInfo("CSVを出力しました。");
     }
 
+    /* ============================
+     *  リセット
+     * ============================ */
     function resetAll() {
+      stopPlayback();
       gGrid = null;
       gForecastFrames = [];
       gForecastTimes  = [];
       gForecastStart  = null;
       currentStepIndex = 0;
-      document.getElementById("timeSlider").max = String(N_STEPS);
       document.getElementById("timeSlider").value = "0";
       document.getElementById("timeLabel").textContent = "t = 0.0 h";
       document.getElementById("utcLabel").textContent  = "UTC: --";
@@ -2633,6 +2597,9 @@ SStorm倍率（rStorm）は Mukhtarov風（季節×緯度×Kp）＋tail：
       logInfo("リセットしました（保存データは削除していません）。");
     }
 
+    /* ============================
+     *  起動時初期化
+     * ============================ */
     function boot() {
       loadConfig(false);
       loadColorScales();
@@ -2641,14 +2608,14 @@ SStorm倍率（rStorm）は Mukhtarov風（季節×緯度×Kp）＋tail：
       fillForecastStartCandidates();
       initMapIfNeeded();
       updateLegend();
+      updatePlaybackButton();
       requestDraw();
-      switchKpInputTab(gKpInputMode || "auto");
 
+      // 起動直後は Kp などは未計算なので軽く表示
       logInfo("起動しました。BoM/NOAA入力 → Kpテキスト → 実行 を押してください。");
     }
 
     document.addEventListener("DOMContentLoaded", boot);
   </script>
-  <script src="js/swifttec_v4_archive_dop.js"></script>
 </body>
 </html>
